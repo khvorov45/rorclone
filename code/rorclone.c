@@ -1,25 +1,5 @@
-// TODO(khvorov) Link this somewhere https://gist.github.com/mmozeiko/5e727f845db182d468a34d524508ad5f
-
-#pragma comment (lib, "gdi32")
-#pragma comment (lib, "user32")
-#pragma comment (lib, "dxguid")
-#pragma comment (lib, "d3d11")
-
-#define COBJMACROS
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <d3d11.h>
-#include <dxgi1_2.h>
-#include <d3dcompiler.h>
-#include <dxgidebug.h>
-#include <intrin.h>
-
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
-
-#include "rorclone.hlsl_vs.h"
-#include "rorclone.hlsl_ps.h"
 
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
 #define assertHR(hr) assert(SUCCEEDED(hr))
@@ -27,6 +7,7 @@
 #define STR(x) STR2(x)
 #define unused(x) ((x) = (x))
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
+#define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
@@ -42,6 +23,28 @@ typedef double   f64;
 typedef struct V2 {
     f32 x, y;
 } V2;
+
+//
+// SECTION Platform
+//
+
+// NOTE(khvorov) D3D11 initialisation code is based on this
+// https://gist.github.com/mmozeiko/5e727f845db182d468a34d524508ad5f
+
+#pragma comment (lib, "gdi32")
+#pragma comment (lib, "user32")
+#pragma comment (lib, "dxguid")
+#pragma comment (lib, "d3d11")
+
+#define COBJMACROS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <dxgidebug.h>
+
+#include "rorclone.hlsl_vs.h"
+#include "rorclone.hlsl_ps.h"
 
 static void fatalError(const char* message) {
     MessageBoxA(NULL, message, "Error", MB_ICONEXCLAMATION);
@@ -95,11 +98,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assert(window.hwnd && "Failed to create window");
     }
 
+    typedef struct RectInstance {
+        V2 pos;
+        V2 scale;
+    } RectInstance;
+
     struct {
         ID3D11Device* device;
         ID3D11DeviceContext* context;
         IDXGISwapChain1* swapChain;
-        ID3D11Buffer* vbuffer;
+        struct {ID3D11Buffer* buf; struct {RectInstance* ptr; i64 len; i64 cap;} mapped;} rects;
         ID3D11InputLayout* layout;
         ID3D11VertexShader* vshader;
         ID3D11PixelShader* pshader;
@@ -182,33 +190,28 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         IDXGIDevice_Release(dxgiDevice);
     }
 
-    struct Vertex {
-        V2 pos;
-        V2 scale;
-    };
-
     {
-        struct Vertex data[] = {
-            {{0.0f, 0.0f}, .scale = {0.1, 0.1}},
-            {{0.5f, 0.5f}, .scale = {0.1, 0.1}},
-        };
+        d3d11.rects.mapped.cap = 1024;
 
         D3D11_BUFFER_DESC desc = {
-            .ByteWidth = sizeof(data),
+            .ByteWidth = sizeof(*d3d11.rects.mapped.ptr) * d3d11.rects.mapped.cap,
             .Usage = D3D11_USAGE_DYNAMIC,
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
             .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
         };
 
-        D3D11_SUBRESOURCE_DATA initial = { .pSysMem = data };
-        HRESULT ID3D11Device_CreateBufferResult = ID3D11Device_CreateBuffer(d3d11.device, &desc, &initial, &d3d11.vbuffer);
+        HRESULT ID3D11Device_CreateBufferResult = ID3D11Device_CreateBuffer(d3d11.device, &desc, 0, &d3d11.rects.buf);
         assertHR(ID3D11Device_CreateBufferResult);
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        d3d11.rects.mapped.ptr = (RectInstance*)mapped.pData;
     }
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, pos),   D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            {"SCALE",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(struct Vertex, scale), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos),   D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+            {"SCALE",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, scale), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
         };
 
         HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, globalShader_vs, sizeof(globalShader_vs), NULL, &d3d11.vshader);
@@ -360,9 +363,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_IASetInputLayout(d3d11.context, d3d11.layout);
             ID3D11DeviceContext_IASetPrimitiveTopology(d3d11.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
             {
-                UINT stride = sizeof(struct Vertex);
+                UINT stride = sizeof(RectInstance);
                 UINT offset = 0;
-                ID3D11DeviceContext_IASetVertexBuffers(d3d11.context, 0, 1, &d3d11.vbuffer, &stride, &offset);
+                ID3D11DeviceContext_IASetVertexBuffers(d3d11.context, 0, 1, &d3d11.rects.buf, &stride, &offset);
             }
 
             ID3D11DeviceContext_VSSetShader(d3d11.context, d3d11.vshader, NULL, 0);
@@ -377,7 +380,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
 
-            ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, 2, 0, 0);
+            arrpush(d3d11.rects.mapped, ((RectInstance) {{0, 0}, {0.1, 0.1}}));
+            arrpush(d3d11.rects.mapped, ((RectInstance) {{0.5, 0.5}, {0.1, 0.1}}));
+            d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
+            ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, d3d11.rects.mapped.len, 0, 0);
+
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                d3d11.rects.mapped.ptr = (RectInstance*)mapped.pData;
+                d3d11.rects.mapped.len = 0;
+            }
         }
 
         {
@@ -396,7 +409,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     d3d11.device->lpVtbl->Release(d3d11.device);
     d3d11.context->lpVtbl->Release(d3d11.context);
     d3d11.swapChain->lpVtbl->Release(d3d11.swapChain);
-    d3d11.vbuffer->lpVtbl->Release(d3d11.vbuffer);
+    d3d11.rects.buf->lpVtbl->Release(d3d11.rects.buf);
     d3d11.layout->lpVtbl->Release(d3d11.layout);
     d3d11.vshader->lpVtbl->Release(d3d11.vshader);
     d3d11.pshader->lpVtbl->Release(d3d11.pshader);
