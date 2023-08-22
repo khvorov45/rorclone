@@ -1,3 +1,6 @@
 temp*
 .vscode
 code/*hlsl_*
+.vs
+*.sln
+*.rdbg
