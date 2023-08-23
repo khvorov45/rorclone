@@ -100,7 +100,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     typedef struct RectInstance {
         V2 pos;
-        V2 scale;
+        V2 dim;
     } RectInstance;
 
     struct {
@@ -210,8 +210,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos),   D3D11_INPUT_PER_INSTANCE_DATA, 1 },
-            {"SCALE",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, scale), D3D11_INPUT_PER_INSTANCE_DATA, 1 },
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"DIM",      0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
 
         HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, globalShader_vs, sizeof(globalShader_vs), NULL, &d3d11.vshader);
@@ -288,17 +288,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
+    arrpush(d3d11.rects.mapped, ((RectInstance) {{0, 0}, {1, 5}}));
+    arrpush(d3d11.rects.mapped, ((RectInstance) {{4, 0}, {1, 4}}));
+
     for (;;) {
 
-        {
-            MSG msg = {};
-            if (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-                if (msg.message == WM_QUIT) {
+        for (MSG msg = {}; PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE);) {
+            switch (msg.message) {
+                case WM_MOUSEMOVE:
+                case WM_KEYDOWN:
                     break;
-                }
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-                continue;
+
+                case WM_QUIT: goto breakmainloop; break;
+                default: TranslateMessage(&msg); DispatchMessageW(&msg); break;
+            }
+        }
+
+        {
+            u8 keyboard[256];
+            GetKeyboardState(keyboard);
+            u8 downMask = (1 << 7);
+            if (keyboard[VK_LEFT] & downMask) {
+                d3d11.rects.mapped.ptr[0].pos.x -= 0.01f;
+            }
+            if (keyboard[VK_RIGHT] & downMask) {
+                d3d11.rects.mapped.ptr[0].pos.x += 0.01f;
             }
         }
 
@@ -380,16 +394,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
 
-            arrpush(d3d11.rects.mapped, ((RectInstance) {{0, 0}, {0.1, 0.1}}));
-            arrpush(d3d11.rects.mapped, ((RectInstance) {{0.5, 0.5}, {0.1, 0.1}}));
             d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
             ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, d3d11.rects.mapped.len, 0, 0);
 
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-                d3d11.rects.mapped.ptr = (RectInstance*)mapped.pData;
-                d3d11.rects.mapped.len = 0;
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
+                assert(d3d11.rects.mapped.ptr == (RectInstance*)mapped.pData);
             }
         }
 
@@ -405,10 +416,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
     }
+    breakmainloop:
 
     d3d11.device->lpVtbl->Release(d3d11.device);
     d3d11.context->lpVtbl->Release(d3d11.context);
     d3d11.swapChain->lpVtbl->Release(d3d11.swapChain);
+    d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
     d3d11.rects.buf->lpVtbl->Release(d3d11.rects.buf);
     d3d11.layout->lpVtbl->Release(d3d11.layout);
     d3d11.vshader->lpVtbl->Release(d3d11.vshader);
@@ -417,7 +430,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     d3d11.sampler->lpVtbl->Release(d3d11.sampler);
     d3d11.blendState->lpVtbl->Release(d3d11.blendState);
     d3d11.rasterizerState->lpVtbl->Release(d3d11.rasterizerState);
-    d3d11.rtView->lpVtbl->Release(d3d11.rtView);
+    if (d3d11.rtView) d3d11.rtView->lpVtbl->Release(d3d11.rtView);
 
     return 0;
 }

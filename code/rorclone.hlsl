@@ -1,7 +1,7 @@
 struct VS_INPUT {
     uint   index : SV_VertexID;
     float2 pos   : POSITION;
-    float2 scale : SCALE;
+    float2 dim   : DIM;
 };
 
 struct PS_INPUT {
@@ -10,18 +10,31 @@ struct PS_INPUT {
     float4 color : COLOR;
 };
 
+// TODO(khvorov) Set this up
+// cbuffer cbuffer0 : register(b0) {
+//     float2 cameraPos;
+//     float2 cameraHalfSpan;
+// }
+
 sampler sampler0 : register(s0);
 
 Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
+    float2 cameraPos = float2(3, 1);
+    float2 cameraHalfSpan = float2(10, 10);
+    float2 posInCamera = input.pos - cameraPos;;
+    float2 posInClip = posInCamera / cameraHalfSpan;
+    float2 dimInClip = input.dim / cameraHalfSpan;
+    float2 scaleInClip = dimInClip * 0.5;
+
     float2 vertices[] = {
         {-1,  1},
         { 1,  1},
         {-1, -1},
         { 1, -1},
     };
-    float2 thisVertex = vertices[input.index] * input.scale + input.pos;
+    float2 thisVertex = vertices[input.index] * scaleInClip + posInClip;
     
     float2 uvs[] = {
         {0, 1},
