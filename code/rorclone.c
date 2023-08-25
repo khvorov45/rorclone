@@ -1,9 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define STB_SPRINTF_IMPLEMENTATION
-#include "stb_sprintf.h"
-
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
 #define assertHR(hr) assert(SUCCEEDED(hr))
 #define STR2(x) #x
@@ -12,6 +9,13 @@
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
+
+#define STB_SPRINTF_IMPLEMENTATION
+#include "stb_sprintf.h"
+
+#define STBI_ASSERT(x) assert(x)
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
@@ -332,12 +336,36 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     }
 
     {
-        u32 pixels[] = {
-            0xff0000ff, 0xff00ff00,
-            0xffff0000, 0xffff00ff,
-        };
-        UINT width = 2;
-        UINT height = 2;
+        TempMemory temp = beginTempMemory(arena);
+
+        u32* pixels = 0;
+        i32 width = 0;
+        i32 height = 0;
+        {
+            HANDLE hfile = CreateFileA(
+                "data/Sprite-0001.png",
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                0, 
+                OPEN_EXISTING, 
+                FILE_ATTRIBUTE_NORMAL,
+                0
+            );
+            assert(hfile != INVALID_HANDLE_VALUE);
+
+            LARGE_INTEGER fileSize = {};
+            GetFileSizeEx(hfile, &fileSize);
+
+            void* fileContent = arenaFreeptr(arena);
+            DWORD bytesRead = 0;
+            ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
+            assert(bytesRead == fileSize.QuadPart);
+
+            int channelsInFile = 0;
+            pixels = (u32*)stbi_load_from_memory(fileContent, fileSize.QuadPart, &width, &height, &channelsInFile, 0);
+            assert(pixels);
+            assert(channelsInFile == 4);
+        }
 
         D3D11_TEXTURE2D_DESC desc = {
             .Width = width,
@@ -359,6 +387,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateTexture2D(d3d11.device, &desc, &data, &texture);
         ID3D11Device_CreateShaderResourceView(d3d11.device, (ID3D11Resource*)texture, NULL, &d3d11.textureView);
         ID3D11Texture2D_Release(texture);
+
+        stbi_image_free(pixels);
+        endTempMemory(temp);
     }
 
     {
@@ -401,11 +432,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    arrpush(d3d11.rects.storage, ((RectInstance) {{0, 0}, {1, 5}}));
-    arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {1, 4}}));
+    arrpush(d3d11.rects.storage, ((RectInstance) {{0, 0}, {5, 5}}));
+    arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
     d3d11.cbuffer.storage.cameraHalfSpanX = 10;
 
     for (;;) {
+        assert(arena->tempCount == 0);
 
         for (MSG msg = {}; PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
@@ -503,7 +535,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 .MaxDepth = 1,
             };
 
-            FLOAT color[] = {0, 0, 0, 0};
+            FLOAT color[] = {0.01, 0, 0.2, 0};
             ID3D11DeviceContext_ClearRenderTargetView(d3d11.context, d3d11.rtView, color);
 
             ID3D11DeviceContext_IASetInputLayout(d3d11.context, d3d11.layout);

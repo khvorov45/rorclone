@@ -36,10 +36,10 @@ PS_INPUT vs(VS_INPUT input) {
     float2 thisVertex = vertices[input.index] * scaleInClip + posInClip;
     
     float2 uvs[] = {
-        {0, 1},
-        {1, 1},
         {0, 0},
         {1, 0},
+        {0, 1},
+        {1, 1},
     };
     float2 thisUV = uvs[input.index];
 
