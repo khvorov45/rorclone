@@ -51,6 +51,7 @@ PS_INPUT vs(VS_INPUT input) {
 }
 
 float4 ps(PS_INPUT input) : SV_TARGET {
+    // TODO(khvorov) Blend the pixels that are in-between the texels
     float4 tex = texture0.Sample(sampler0, input.uv);
     float4 result = input.color * tex;
     return result;
