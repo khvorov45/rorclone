@@ -8,6 +8,7 @@
 #define unused(x) ((x) = (x))
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
+#define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
@@ -19,6 +20,22 @@ typedef int64_t  i64;
 typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
+
+typedef struct Arena {
+    void* base;
+    i64 size;
+    i64 used;
+} Arena;
+static i64 arenaFreesize(Arena* arena) { return arena->size - arena->used;}
+static void* arenaFreeptr(Arena* arena) { return arena->base + arena->used;}
+
+static void* arenaAlloc(Arena* arena, i64 size) {
+    // TODO(khvorov) Do we need alignment?
+    assert(arenaFreesize(arena) >= size);
+    void* result = arenaFreeptr(arena);
+    arena->used += size;
+    return result;
+}
 
 typedef struct V2 {
     f32 x, y;
@@ -75,17 +92,18 @@ static LRESULT CALLBACK windowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpa
     return DefWindowProcW(wnd, msg, wparam, lparam);
 }
 
-// TODO(khvorov) Remove
-typedef struct RectInstance {
-    V2 pos;
-    V2 dim;
-} RectInstance;
-static RectInstance tempStorage[1024];
-
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, int cmdshow) {
     unused(previnstance);
     unused(cmdline);
     unused(cmdshow);
+
+    Arena arena_ = {};
+    Arena* arena = &arena_;
+    {
+        arena->size = 1 * 1024 * 1024 * 1024;
+        arena->base = VirtualAlloc(0, arena->size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        assert(arena->base);
+    }
 
     struct {
         HWND hwnd;
@@ -119,6 +137,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         );
         assert(window.hwnd && "Failed to create window");
     }
+
+    typedef struct RectInstance {
+        V2 pos;
+        V2 dim;
+    } RectInstance;
     
     typedef struct CBuffer {
         V2 cameraPos;
@@ -217,7 +240,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         d3d11.rects.storage.cap = 1024;
         d3d11.rects.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.storage.ptr) * d3d11.rects.storage.cap, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.storage.ptr = tempStorage;
+        d3d11.rects.storage.ptr = arenaAllocArray(arena, RectInstance, d3d11.rects.storage.cap);
     }
 
     {
