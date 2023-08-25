@@ -1,6 +1,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define STB_SPRINTF_IMPLEMENTATION
+#include "stb_sprintf.h"
+
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
 #define assertHR(hr) assert(SUCCEEDED(hr))
 #define STR2(x) #x
@@ -25,16 +28,35 @@ typedef struct Arena {
     void* base;
     i64 size;
     i64 used;
+    i64 tempCount;
 } Arena;
 static i64 arenaFreesize(Arena* arena) { return arena->size - arena->used;}
 static void* arenaFreeptr(Arena* arena) { return arena->base + arena->used;}
 
 static void* arenaAlloc(Arena* arena, i64 size) {
-    // TODO(khvorov) Do we need alignment?
     assert(arenaFreesize(arena) >= size);
     void* result = arenaFreeptr(arena);
     arena->used += size;
     return result;
+}
+
+typedef struct TempMemory {
+    i64 usedBefore;
+    i64 tempBefore;
+    Arena* arena;
+} TempMemory;
+
+static TempMemory beginTempMemory(Arena* arena) {
+    TempMemory result = {.usedBefore = arena->used, .tempBefore = arena->tempCount, .arena = arena};
+    arena->tempCount += 1;
+    return result;
+}
+
+static void endTempMemory(TempMemory temp) {
+    assert(temp.usedBefore <= temp.arena->used);
+    assert(temp.tempBefore == temp.arena->tempCount - 1);
+    temp.arena->used = temp.usedBefore;
+    temp.arena->tempCount -= 1;
 }
 
 typedef struct V2 {
@@ -62,6 +84,58 @@ typedef struct V2 {
 
 #include "rorclone.hlsl_vs.h"
 #include "rorclone.hlsl_ps.h"
+
+void benchAlignment(Arena* arena) {
+    // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
+
+    // NOTE(khvorov) Assume aligned
+    assert(((u64)arenaFreeptr(arena) & 3) == 0);
+
+    // NOTE(khvorov) Toggle misalignment
+    // arena->used += 1;
+
+    i64 floatsToAlloc[] = {100, 1000, 10000, 100000};
+    for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)arrayCount(floatsToAlloc); floatsToAllocIndex++) {
+        i64 floatCount = floatsToAlloc[floatsToAllocIndex];
+        u64 minDiff = UINT64_MAX;
+        u64 maxDiff = 0;
+
+        i64 timesToRun = 10000;
+        f32 sumOfSums = 0;
+
+        for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) {
+            TempMemory temp = beginTempMemory(arena);
+
+            u64 before = __rdtsc();
+
+            f32* arr = arenaAllocArray(arena, f32, floatCount);
+            for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
+                arr[floatIndex] = (f32)floatIndex;
+            }
+            f32 sum = 0;
+            for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
+                sum += arr[floatIndex];
+            }
+
+            sumOfSums += sum;
+
+            u64 after = __rdtsc();
+            u64 diff = after - before;
+
+            minDiff = min(minDiff, diff);
+            maxDiff = max(maxDiff, diff);
+
+            endTempMemory(temp);
+        }
+
+        {
+            char* out = arenaFreeptr(arena);
+            stbsp_snprintf(out, arenaFreesize(arena), "floatCount: %llu, sum: %f, min: %llu, max: %llu\n", floatCount, sumOfSums, minDiff, maxDiff);
+            OutputDebugStringA(out);
+        }
+    }
+}
+
 
 static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_BIND_FLAG flag) {
     D3D11_BUFFER_DESC desc = {
