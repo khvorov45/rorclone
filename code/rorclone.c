@@ -46,6 +46,31 @@ typedef struct V2 {
 #include "rorclone.hlsl_vs.h"
 #include "rorclone.hlsl_ps.h"
 
+typedef struct D3D11MappedBuffer {
+    ID3D11Buffer* buf;
+    void* mappedPtr;
+} D3D11MappedBuffer;
+
+static D3D11MappedBuffer d3d11CreateMappedBuffer(ID3D11Device* device, ID3D11DeviceContext* context, i64 size, D3D11_BIND_FLAG flag) {
+    D3D11MappedBuffer result = {};
+
+    D3D11_BUFFER_DESC desc = {
+        .ByteWidth = size,
+        .Usage = D3D11_USAGE_DYNAMIC,
+        .BindFlags = flag,
+        .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+    };
+
+    HRESULT ID3D11Device_CreateBufferResult = ID3D11Device_CreateBuffer(device, &desc, 0, &result.buf);
+    assertHR(ID3D11Device_CreateBufferResult);
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    context->lpVtbl->Map(context, (ID3D11Resource*)result.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    result.mappedPtr = mapped.pData;
+
+    return result;
+}
+
 static void fatalError(const char* message) {
     MessageBoxA(NULL, message, "Error", MB_ICONEXCLAMATION);
     ExitProcess(0);
@@ -102,12 +127,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         V2 pos;
         V2 dim;
     } RectInstance;
+    
+    typedef struct CBuffer {
+        V2 cameraPos;
+        f32 cameraHalfSpanX;
+        f32 cameraHeightOverWidth;
+    } CBuffer;
 
     struct {
         ID3D11Device* device;
         ID3D11DeviceContext* context;
         IDXGISwapChain1* swapChain;
         struct {ID3D11Buffer* buf; struct {RectInstance* ptr; i64 len; i64 cap;} mapped;} rects;
+        struct {ID3D11Buffer* buf; CBuffer* mappedPtr;} cbuffer;
         ID3D11InputLayout* layout;
         ID3D11VertexShader* vshader;
         ID3D11PixelShader* pshader;
@@ -192,20 +224,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     {
         d3d11.rects.mapped.cap = 1024;
-
-        D3D11_BUFFER_DESC desc = {
-            .ByteWidth = sizeof(*d3d11.rects.mapped.ptr) * d3d11.rects.mapped.cap,
-            .Usage = D3D11_USAGE_DYNAMIC,
-            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
-            .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
-        };
-
-        HRESULT ID3D11Device_CreateBufferResult = ID3D11Device_CreateBuffer(d3d11.device, &desc, 0, &d3d11.rects.buf);
-        assertHR(ID3D11Device_CreateBufferResult);
-
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-        d3d11.rects.mapped.ptr = (RectInstance*)mapped.pData;
+        D3D11MappedBuffer mapped = d3d11CreateMappedBuffer(d3d11.device, d3d11.context, sizeof(*d3d11.rects.mapped.ptr) * d3d11.rects.mapped.cap, D3D11_BIND_VERTEX_BUFFER);
+        d3d11.rects.mapped.ptr =  mapped.mappedPtr;
+        d3d11.rects.buf = mapped.buf;
     }
 
     {
@@ -286,10 +307,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateRasterizerState(d3d11.device, &desc, &d3d11.rasterizerState);
     }
 
+    {
+        D3D11MappedBuffer mapped = d3d11CreateMappedBuffer(d3d11.device, d3d11.context, sizeof(CBuffer), D3D11_BIND_CONSTANT_BUFFER);
+        d3d11.cbuffer.buf = mapped.buf;
+        d3d11.cbuffer.mappedPtr = mapped.mappedPtr;
+    }
+
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
     arrpush(d3d11.rects.mapped, ((RectInstance) {{0, 0}, {1, 5}}));
     arrpush(d3d11.rects.mapped, ((RectInstance) {{4, 0}, {1, 4}}));
+    d3d11.cbuffer.mappedPtr->cameraHalfSpanX = 10;
 
     for (;;) {
 
@@ -314,6 +342,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             if (keyboard[VK_RIGHT] & downMask) {
                 d3d11.rects.mapped.ptr[0].pos.x += 0.01f;
             }
+
+            d3d11.cbuffer.mappedPtr->cameraPos = (V2) {0, 0};
         }
 
         {
@@ -345,7 +375,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                         .Height = windowHeight,
                         .MipLevels = 1,
                         .ArraySize = 1,
-                        .Format = DXGI_FORMAT_D32_FLOAT, // or use DXGI_FORMAT_D32_FLOAT_S8X24_UINT if you need stencil
+                        .Format = DXGI_FORMAT_D32_FLOAT,
                         .SampleDesc = { 1, 0 },
                         .Usage = D3D11_USAGE_DEFAULT,
                         .BindFlags = D3D11_BIND_DEPTH_STENCIL,
@@ -361,7 +391,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
 
+        d3d11.cbuffer.mappedPtr->cameraHeightOverWidth = (f32)window.h / (f32)window.w;
+
         if (d3d11.rtView) {
+            d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
+            d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.cbuffer.buf, 0);
+
             D3D11_VIEWPORT viewport = {
                 .TopLeftX = 0,
                 .TopLeftY = 0,
@@ -382,6 +417,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 ID3D11DeviceContext_IASetVertexBuffers(d3d11.context, 0, 1, &d3d11.rects.buf, &stride, &offset);
             }
 
+            d3d11.context->lpVtbl->VSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
+
             ID3D11DeviceContext_VSSetShader(d3d11.context, d3d11.vshader, NULL, 0);
 
             ID3D11DeviceContext_RSSetViewports(d3d11.context, 1, &viewport);
@@ -393,14 +430,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
-
-            d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
+            
             ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, d3d11.rects.mapped.len, 0, 0);
 
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
                 d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
-                assert(d3d11.rects.mapped.ptr == (RectInstance*)mapped.pData);
+                assert(d3d11.rects.mapped.ptr == mapped.pData);
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer.buf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
+                assert(d3d11.cbuffer.mappedPtr == mapped.pData);
             }
         }
 
@@ -421,8 +459,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     d3d11.device->lpVtbl->Release(d3d11.device);
     d3d11.context->lpVtbl->Release(d3d11.context);
     d3d11.swapChain->lpVtbl->Release(d3d11.swapChain);
+
     d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
     d3d11.rects.buf->lpVtbl->Release(d3d11.rects.buf);
+
+    d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.cbuffer.buf, 0);
+    d3d11.cbuffer.buf->lpVtbl->Release(d3d11.cbuffer.buf);
+
     d3d11.layout->lpVtbl->Release(d3d11.layout);
     d3d11.vshader->lpVtbl->Release(d3d11.vshader);
     d3d11.pshader->lpVtbl->Release(d3d11.pshader);

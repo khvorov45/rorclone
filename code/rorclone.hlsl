@@ -10,20 +10,19 @@ struct PS_INPUT {
     float4 color : COLOR;
 };
 
-// TODO(khvorov) Set this up
-// cbuffer cbuffer0 : register(b0) {
-//     float2 cameraPos;
-//     float2 cameraHalfSpan;
-// }
+cbuffer cbuffer0 : register(b0) {
+    float2 cameraPos;
+    float cameraHalfSpanX;
+    float cameraHeightOverWidth;
+}
 
 sampler sampler0 : register(s0);
 
 Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
-    float2 cameraPos = float2(3, 1);
-    float2 cameraHalfSpan = float2(10, 10);
-    float2 posInCamera = input.pos - cameraPos;;
+    float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
+    float2 posInCamera = input.pos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
     float2 dimInClip = input.dim / cameraHalfSpan;
     float2 scaleInClip = dimInClip * 0.5;
