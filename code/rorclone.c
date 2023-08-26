@@ -170,6 +170,32 @@ static LRESULT CALLBACK windowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpa
     return DefWindowProcW(wnd, msg, wparam, lparam);
 }
 
+// https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353
+void toggleFullscreen(HWND hwnd, WINDOWPLACEMENT* wpPrev) {
+    DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+
+    if (dwStyle & WS_OVERLAPPEDWINDOW) {
+        MONITORINFO mi = { .cbSize = sizeof(mi) };
+        if (GetWindowPlacement(hwnd, wpPrev) && GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            SetWindowLong(hwnd, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
+            SetWindowPos(
+                hwnd, HWND_TOP,
+                mi.rcMonitor.left, mi.rcMonitor.top,
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                SWP_NOOWNERZORDER | SWP_FRAMECHANGED
+            );
+        }
+    } else {
+        SetWindowLong(hwnd, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(hwnd, wpPrev);
+        SetWindowPos(
+            hwnd, NULL, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED
+        );
+    }
+}
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, int cmdshow) {
     unused(previnstance);
     unused(cmdline);
@@ -186,7 +212,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     struct {
         HWND hwnd;
         DWORD w, h;
-    } window = {};
+        WINDOWPLACEMENT wpPrev;
+    } window = {.wpPrev = {.length = sizeof(WINDOWPLACEMENT)}};
 
     {
         WNDCLASSEXW windowClass = {
@@ -214,13 +241,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             NULL, NULL, windowClass.hInstance, NULL
         );
         assert(window.hwnd && "Failed to create window");
+
+        toggleFullscreen(window.hwnd, &window.wpPrev);
     }
 
     typedef struct RectInstance {
         V2 pos;
         V2 dim;
     } RectInstance;
-    
+
     typedef struct CBuffer {
         V2 cameraPos;
         f32 cameraHalfSpanX;
@@ -346,8 +375,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 "data/Sprite-0001.png",
                 GENERIC_READ,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                0, 
-                OPEN_EXISTING, 
+                0,
+                OPEN_EXISTING,
                 FILE_ATTRIBUTE_NORMAL,
                 0
             );
@@ -395,9 +424,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         D3D11_SAMPLER_DESC desc = {
             .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT,
-            .AddressU = D3D11_TEXTURE_ADDRESS_WRAP,
-            .AddressV = D3D11_TEXTURE_ADDRESS_WRAP,
-            .AddressW = D3D11_TEXTURE_ADDRESS_WRAP,
+            .AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
         };
         ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.sampler);
     }
@@ -432,9 +461,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    arrpush(d3d11.rects.storage, ((RectInstance) {{0, 0}, {5, 5}}));
-    arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
     d3d11.cbuffer.storage.cameraHalfSpanX = 10;
+
+    arrpush(d3d11.rects.storage, ((RectInstance) {{-10.0 + 2.5, 0}, {5, 5}}));
+    arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
 
     for (;;) {
         assert(arena->tempCount == 0);
@@ -443,7 +473,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             switch (msg.message) {
                 case WM_MOUSEMOVE:
                 case WM_KEYDOWN:
+                case WM_KEYUP:
+                case WM_SYSKEYUP:
                     break;
+
+                case WM_SYSKEYDOWN: {
+                    switch (msg.wParam) {
+                        case VK_RETURN: toggleFullscreen(window.hwnd, &window.wpPrev); break;
+                        case VK_F4: goto breakmainloop; break;
+                    }
+                } break;
 
                 case WM_QUIT: goto breakmainloop; break;
                 default: TranslateMessage(&msg); DispatchMessageW(&msg); break;
@@ -454,11 +493,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             u8 keyboard[256];
             GetKeyboardState(keyboard);
             u8 downMask = (1 << 7);
+
+            f32 deltaX = 0.001f;
             if (keyboard[VK_LEFT] & downMask) {
-                d3d11.rects.storage.ptr[0].pos.x -= 0.01f;
+                d3d11.rects.storage.ptr[0].pos.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
-                d3d11.rects.storage.ptr[0].pos.x += 0.01f;
+                d3d11.rects.storage.ptr[0].pos.x += deltaX;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
@@ -559,7 +600,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
-            
+
             ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, d3d11.rects.storage.len, 0, 0);
         }
 
