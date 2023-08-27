@@ -467,8 +467,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     d3d11.cbuffer.storage.cameraHalfSpanX = 10;
 
-    arrpush(d3d11.rects.storage, ((RectInstance) {{-10.0 + 2.5, 0}, {5, 5}}));
-    arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
+    // TODO(khvorov) Better way to move by pixels
+    {
+        RECT rect = {};
+        GetClientRect(window.hwnd, &rect);
+        DWORD windowWidth = rect.right - rect.left;
+        f32 windowHalfWidth = (f32)windowWidth / 2.0f;
+        f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
+
+        arrpush(d3d11.rects.storage, ((RectInstance) {{-10.0 + 2.5 + WUPerPixel * 0.5f, 0}, {5, 5}}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
+    }
 
     for (;;) {
         assert(arena->tempCount == 0);
@@ -593,6 +602,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
 
             d3d11.context->lpVtbl->VSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
+            d3d11.context->lpVtbl->PSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
 
             ID3D11DeviceContext_VSSetShader(d3d11.context, d3d11.vshader, NULL, 0);
 
