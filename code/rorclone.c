@@ -471,6 +471,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             assert(allRectsPacked);
         }
 
+        // TODO(khvorov) Add 1px gap around every texture
         Texture atlas = {};
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
