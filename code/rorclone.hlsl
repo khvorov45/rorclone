@@ -62,7 +62,6 @@ PS_INPUT vs(VS_INPUT input) {
 }
 
 float4 ps(PS_INPUT input) : SV_TARGET {
-    // TODO(khvorov) Gamma
     float4 texColortopleft = texture0.Sample(sampler0, float2(input.uvleft, input.uvtop));
     float4 texColortopright = texture0.Sample(sampler0, float2(input.uvright, input.uvtop));
     float4 texColorbottomleft = texture0.Sample(sampler0, float2(input.uvleft, input.uvbottom));

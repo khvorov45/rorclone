@@ -499,7 +499,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             .Height = atlas.h,
             .MipLevels = 1,
             .ArraySize = 1,
-            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
             .SampleDesc = { 1, 0 },
             .Usage = D3D11_USAGE_IMMUTABLE,
             .BindFlags = D3D11_BIND_SHADER_RESOURCE,
@@ -570,8 +570,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {{-10.0 + 2.5 + WUPerPixel * 0.5f, 0}, {5, 5}}));
         arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {{0.0 + 2.5 + WUPerPixel * 0.5f, -3}, {5, 5}}));
     }
 
     for (;;) {
@@ -634,7 +634,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                     ID3D11Texture2D* backbuffer = 0;
                     IDXGISwapChain1_GetBuffer(d3d11.swapChain, 0, &IID_ID3D11Texture2D, (void**)&backbuffer);
-                    ID3D11Device_CreateRenderTargetView(d3d11.device, (ID3D11Resource*)backbuffer, NULL, &d3d11.rtView);
+
+                    // https://gamedev.net/forums/topic/670546-d3d12srgb-buffer-format-for-swap-chain/5243987/
+                    D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+                    rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+                    rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                    ID3D11Device_CreateRenderTargetView(d3d11.device, (ID3D11Resource*)backbuffer, &rtvDesc, &d3d11.rtView);
                     ID3D11Texture2D_Release(backbuffer);
 
                     D3D11_TEXTURE2D_DESC depthDesc = {
@@ -685,7 +690,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 .MaxDepth = 1,
             };
 
-            FLOAT color[] = {0.01, 0, 0.2, 0};
+            FLOAT color[] = {0.0, 0, 0.0, 0};
             ID3D11DeviceContext_ClearRenderTargetView(d3d11.context, d3d11.rtView, color);
 
             ID3D11DeviceContext_IASetInputLayout(d3d11.context, d3d11.layout);
