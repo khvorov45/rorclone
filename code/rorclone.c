@@ -1,3 +1,5 @@
+#pragma clang diagnostic ignored "-Wunused-function"
+
 #include <stdint.h>
 #include <stddef.h>
 
@@ -10,12 +12,19 @@
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
 
+#define STB_SPRINTF_STATIC
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb_sprintf.h"
 
+#define STB_IMAGE_STATIC
 #define STBI_ASSERT(x) assert(x)
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#define STBRP_STATIC
+#define STBRP_ASSERT(x) assert(x)
+#define STB_RECT_PACK_IMPLEMENTATION
+#include "stb_rectpack.h"
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
@@ -66,6 +75,11 @@ static void endTempMemory(TempMemory temp) {
 typedef struct V2 {
     f32 x, y;
 } V2;
+
+typedef struct Texture {
+    u32* pixels;
+    i32 w, h;
+} Texture;
 
 //
 // SECTION Platform
@@ -369,38 +383,120 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         TempMemory temp = beginTempMemory(arena);
 
-        u32* pixels = 0;
-        i32 width = 0;
-        i32 height = 0;
+        struct { Texture* ptr; i32 len; i32 cap; } textures = {.cap = 100};
+        textures.ptr = arenaAllocArray(arena, Texture, textures.cap);
         {
-            HANDLE hfile = CreateFileA(
-                "data/Sprite-0001.png",
-                GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                0,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                0
-            );
-            assert(hfile != INVALID_HANDLE_VALUE);
+            WIN32_FIND_DATAA findData = {};
+            HANDLE findHandle = FindFirstFileA("data/*.png", &findData);
+            assert(findHandle != INVALID_HANDLE_VALUE);
+            do {
+                char* name = findData.cFileName;
+                char* path = arenaFreeptr(arena);
+                arena->used += stbsp_snprintf(path, arenaFreesize(arena), "data/%s", name) + 1;
 
-            LARGE_INTEGER fileSize = {};
-            GetFileSizeEx(hfile, &fileSize);
+                Texture texture = {};
+                {
+                    HANDLE hfile = CreateFileA(
+                        path,
+                        GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        0,
+                        OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL,
+                        0
+                    );
+                    assert(hfile != INVALID_HANDLE_VALUE);
 
-            void* fileContent = arenaFreeptr(arena);
-            DWORD bytesRead = 0;
-            ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
-            assert(bytesRead == fileSize.QuadPart);
+                    LARGE_INTEGER fileSize = {};
+                    GetFileSizeEx(hfile, &fileSize);
 
-            int channelsInFile = 0;
-            pixels = (u32*)stbi_load_from_memory(fileContent, fileSize.QuadPart, &width, &height, &channelsInFile, 0);
-            assert(pixels);
-            assert(channelsInFile == 4);
+                    void* fileContent = arenaFreeptr(arena);
+                    DWORD bytesRead = 0;
+                    ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
+                    assert(bytesRead == fileSize.QuadPart);
+
+                    int channelsInFile = 0;
+                    texture.pixels = (u32*)stbi_load_from_memory(fileContent, fileSize.QuadPart, &texture.w, &texture.h, &channelsInFile, 0);
+                    assert(texture.pixels);
+                    assert(channelsInFile == 4);
+
+                    CloseHandle(hfile);
+                }
+
+                arrpush(textures, texture);
+
+            } while (FindNextFileA(findHandle, &findData));
+        }
+
+        Texture* texturesTrimmed = arenaAllocArray(arena, Texture, textures.len);
+        for (i32 texInd = 0; texInd < textures.len; texInd++) {
+            Texture* texture = textures.ptr + texInd;
+            i32 left = texture->w;
+            i32 right = 0;
+            i32 top = texture->h;
+            i32 bottom = 0;
+            for (i32 row = 0; row < texture->h; row++) {
+                for (i32 col = 0; col < texture->w; col++) {
+                    u32 px = texture->pixels[row * texture->w + col];
+                    if (px) {
+                        left = min(left, col);
+                        right = max(right, col);
+                        top = min(top, row);
+                        bottom = max(bottom, row);
+                    }
+                }
+            }
+
+            Texture* trimmed = texturesTrimmed + texInd;
+            trimmed->pixels = texture->pixels + top * texture->w + left;
+            trimmed->w = right - left + 1;
+            trimmed->h = bottom - top + 1;
+        }
+
+        stbrp_rect* rectsToPack = arenaAllocArray(arena, stbrp_rect, textures.len);
+        for (i32 texInd = 0; texInd < textures.len; texInd++) {
+            Texture* texture = texturesTrimmed + texInd;
+            stbrp_rect* rect = rectsToPack + texInd;
+            rect->id = texInd;
+            rect->w = texture->w;
+            rect->h = texture->h;
+        }
+
+        {
+            struct {stbrp_node* ptr; i32 len;} nodes = {.len = 4096};
+            nodes.ptr = arenaAllocArray(arena, stbrp_node, nodes.len);
+            stbrp_context ctx = {};
+            stbrp_init_target(&ctx, nodes.len, INT_MAX, nodes.ptr, nodes.len);
+            int allRectsPacked = stbrp_pack_rects(&ctx, rectsToPack, textures.len);
+            assert(allRectsPacked);
+        }
+
+        Texture atlas = {};
+        for (i32 texInd = 0; texInd < textures.len; texInd++) {
+            stbrp_rect* rect = rectsToPack + texInd;
+            assert(rect->was_packed);
+            atlas.w = max(atlas.w, rect->x + rect->w);
+            atlas.h = max(atlas.h, rect->y + rect->h);
+        }
+        atlas.pixels = arenaAllocArray(arena, u32, atlas.w * atlas.h);
+
+        for (i32 texInd = 0; texInd < textures.len; texInd++) {
+            stbrp_rect* rect = rectsToPack + texInd;
+            Texture* texture = textures.ptr + rect->id;
+            Texture* trimmed = texturesTrimmed + rect->id;
+
+            for (i32 texRow = 0; texRow < trimmed->h; texRow++) {
+                u32* src = trimmed->pixels + texRow * texture->w;
+                u32* dest = atlas.pixels + (texRow + rect->y) * atlas.w + rect->x;
+                memcpy(dest, src, trimmed->w * sizeof(u32));
+            }
+
+            stbi_image_free(texture->pixels);
         }
 
         D3D11_TEXTURE2D_DESC desc = {
-            .Width = width,
-            .Height = height,
+            .Width = atlas.w,
+            .Height = atlas.h,
             .MipLevels = 1,
             .ArraySize = 1,
             .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -410,8 +506,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         };
 
         D3D11_SUBRESOURCE_DATA data = {
-            .pSysMem = pixels,
-            .SysMemPitch = width * sizeof(u32),
+            .pSysMem = atlas.pixels,
+            .SysMemPitch = atlas.w * sizeof(u32),
         };
 
         ID3D11Texture2D* texture;
@@ -419,9 +515,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateShaderResourceView(d3d11.device, (ID3D11Resource*)texture, NULL, &d3d11.textureView);
         ID3D11Texture2D_Release(texture);
 
-        d3d11.cbuffer.storage.texDim = (V2) {width, height};
+        d3d11.cbuffer.storage.texDim = (V2) {atlas.w, atlas.h};
 
-        stbi_image_free(pixels);
         endTempMemory(temp);
     }
 
