@@ -14,6 +14,8 @@ struct PS_INPUT {
 };
 
 cbuffer cbuffer0 : register(b0) {
+    float2 windowDim;
+    float2 texDim;
     float2 cameraPos;
     float cameraHalfSpanX;
     float cameraHeightOverWidth;
@@ -24,8 +26,6 @@ sampler sampler0 : register(s0);
 Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
-    float2 windowDim = float2(2560, 1440); // TODO(khvorov) Pass in
-
     float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
     float2 posInCamera = input.pos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
@@ -63,8 +63,6 @@ PS_INPUT vs(VS_INPUT input) {
 
 float4 ps(PS_INPUT input) : SV_TARGET {
     // TODO(khvorov) Gamma
-    float2 texDim = float2(32, 32); // TODO(khvorov) Pass in
-
     float4 texColortopleft = texture0.Sample(sampler0, float2(input.uvleft, input.uvtop));
     float4 texColortopright = texture0.Sample(sampler0, float2(input.uvright, input.uvtop));
     float4 texColorbottomleft = texture0.Sample(sampler0, float2(input.uvleft, input.uvbottom));

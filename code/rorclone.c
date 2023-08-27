@@ -251,6 +251,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     } RectInstance;
 
     typedef struct CBuffer {
+        V2 windowDim;
+        V2 texDim;
         V2 cameraPos;
         f32 cameraHalfSpanX;
         f32 cameraHeightOverWidth;
@@ -417,6 +419,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateShaderResourceView(d3d11.device, (ID3D11Resource*)texture, NULL, &d3d11.textureView);
         ID3D11Texture2D_Release(texture);
 
+        d3d11.cbuffer.storage.texDim = (V2) {width, height};
+
         stbi_image_free(pixels);
         endTempMemory(temp);
     }
@@ -550,6 +554,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
 
+        d3d11.cbuffer.storage.windowDim = (V2) {window.w, window.h};
         d3d11.cbuffer.storage.cameraHeightOverWidth = (f32)window.h / (f32)window.w;
 
         if (d3d11.rtView) {
