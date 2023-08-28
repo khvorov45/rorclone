@@ -1,4 +1,5 @@
 #pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -16,10 +17,23 @@
 #define STB_SPRINTF_IMPLEMENTATION
 #include "stb_sprintf.h"
 
+#define STBI_NO_JPEG
+#define STBI_NO_PNG
+#define STBI_NO_BMP
+#define STBI_NO_PSD
+#define STBI_NO_TGA
+#define STBI_NO_GIF
+#define STBI_NO_HDR
+#define STBI_NO_PIC
+#define STBI_NO_PNM
+#define STBI_SUPPORT_ZLIB
 #define STB_IMAGE_STATIC
 #define STBI_ASSERT(x) assert(x)
 #define STB_IMAGE_IMPLEMENTATION
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-parameter"
 #include "stb_image.h"
+#pragma clang diagnostic pop
 
 #define STBRP_STATIC
 #define STBRP_ASSERT(x) assert(x)
@@ -36,6 +50,10 @@ typedef int64_t  i64;
 typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
+
+//
+// SECTION Memory
+//
 
 typedef struct Arena {
     void* base;
@@ -71,6 +89,142 @@ static void endTempMemory(TempMemory temp) {
     temp.arena->used = temp.usedBefore;
     temp.arena->tempCount -= 1;
 }
+
+//
+// SECTION Aseprite
+//
+
+#pragma pack(push)
+#pragma pack(1)
+
+typedef struct AseHeader {
+    u32 fileSize;
+    u16 magic; // 0xA5E0
+    u16 frameCount;
+    u16 width;
+    u16 height;
+    u16 bitsPerPixel;
+    u32 flags;
+    u16 msBetweenFramesDepricated;
+    u32 zero1;
+    u32 zero2;
+    u8 palleteEntryIndexForTransparentColor;
+    u8 ignore[3];
+    u16 colorCount; // 0 means 256 for old sprites
+    u8 pixelWidth;
+    u8 pixelHeight;
+    i16 gridXPos;
+    i16 gridYPos;
+    u16 gridWidth;
+    u16 gridHeight;
+    u8 forFuture[84];
+} AseHeader;
+
+typedef struct AseFrameHeader {
+    u32 bytes;
+    u16 magic; // 0xF1FA
+    u16 chunkCountOld;
+    u16 frameDurationMS;
+    u8 forFuture[2];
+    u32 chunksCountNew;
+} AseFrameHeader;
+
+typedef enum AseChunkType: u16 {
+    AseChunkType_OldPalette = 0x0004,
+    AseChunkType_Layer = 0x2004,
+    AseChunkType_Cel = 0x2005,
+    AseChunkType_ColorProfile = 0x2007,
+    AseChunkType_Palette = 0x2019,
+} AseChunkType;
+
+typedef struct Fixed16x16 {
+    u16 p1;
+    u16 p2;
+} Fixed16x16;
+
+typedef enum AseColorProfileType: u16 {
+    AseColorProfileType_None = 0,
+    AseColorProfileType_sRGB = 1,
+    AseColorProfileType_ICC = 2,
+} AseColorProfileType;
+
+typedef struct AseChunkColorProfile {
+    AseColorProfileType type;
+    u16 flags;
+    Fixed16x16 gamma;
+    u8 reserved[8];
+    struct {u32 len; void* ptr;} icc;
+} AseChunkColorProfile;
+
+typedef struct AseString {
+    u16 len;
+    char str[];
+} AseString;
+
+typedef enum AseLayerFlag {
+    AseLayerFlag_Visible = 1,
+    AseLayerFlag_Editable = 2,
+    AseLayerFlag_LockMovement = 4,
+    AseLayerFlag_Background = 8,
+    AseLayerFlag_PreferLinkedCels = 16,
+    AseLayerFlag_LayerGroupShouldBeDisplayedCollapsed = 32,
+    AseLayerFlag_LayerIsAReferenceLayer = 64,
+} AseLayerFlag;
+typedef u16 AseLayerFlags;
+
+typedef enum AseLayerType: u16 {
+    AseLayerType_Normal = 0,
+    AseLayerType_Group = 1,
+    AseLayerType_Tilemap = 2,
+} AseLayerType;
+
+typedef struct AseChunkLayer {
+    AseLayerFlags flags;
+    AseLayerType type;
+    u16 childLevel;
+    u16 defaultWidthIgnored;
+    u16 defaultHeightIgnored;
+    u16 blendMode;
+    u8 opacity;
+    u8 future[3];
+    AseString name;
+    u16 tilesetIndex;
+} AseChunkLayer;
+
+typedef enum AseCelType: u16 {
+    AseCelType_Raw = 0,
+    AseCelType_Linked = 1,
+    AseCelType_CompressedImage = 2,
+    AseCelType_CompressedTilemap = 3,
+} AseCelType;
+
+typedef struct AseChunkCel {
+    u16 index;
+    i16 posX;
+    i16 posY;
+    u8 opacity;
+    AseCelType type;
+    i16 zIndexOffset;
+    u8 future[5];
+    u16 width;
+    u16 height;
+} AseChunkCel;
+
+typedef struct AseChunk {
+    u32 size;
+    AseChunkType type;
+    union {
+        AseChunkColorProfile colorProfile;
+        AseChunkLayer layer;
+        AseChunkCel cel;
+    };
+} AseChunk;
+
+#pragma pack(pop)
+
+//
+// SECTION Misc
+//
 
 typedef struct V2 {
     f32 x, y;
@@ -387,14 +541,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         textures.ptr = arenaAllocArray(arena, Texture, textures.cap);
         {
             WIN32_FIND_DATAA findData = {};
-            HANDLE findHandle = FindFirstFileA("data/*.png", &findData);
+            HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
             assert(findHandle != INVALID_HANDLE_VALUE);
             do {
                 char* name = findData.cFileName;
                 char* path = arenaFreeptr(arena);
                 arena->used += stbsp_snprintf(path, arenaFreesize(arena), "data/%s", name) + 1;
 
-                Texture texture = {};
                 {
                     HANDLE hfile = CreateFileA(
                         path,
@@ -409,22 +562,66 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                     LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hfile, &fileSize);
+                    assert(fileSize.QuadPart <= arenaFreesize(arena));
 
                     void* fileContent = arenaFreeptr(arena);
                     DWORD bytesRead = 0;
                     ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
                     assert(bytesRead == fileSize.QuadPart);
+                    arena->used += bytesRead;
 
-                    int channelsInFile = 0;
-                    texture.pixels = (u32*)stbi_load_from_memory(fileContent, fileSize.QuadPart, &texture.w, &texture.h, &channelsInFile, 0);
-                    assert(texture.pixels);
-                    assert(channelsInFile == 4);
+                    {
+                        AseHeader* aseHeader = (AseHeader*)fileContent;
+                        assert(aseHeader->magic == 0xA5E0);
+                        void* frameData = fileContent + sizeof(AseHeader);
+                        for (i32 frameIndex = 0; frameIndex < aseHeader->frameCount; frameIndex++) {
+                            AseFrameHeader* frameHeader = (AseFrameHeader*)frameData;
+                            assert(frameHeader->magic == 0xF1FA);
+                            void* chunkData = frameData + sizeof(AseFrameHeader);
+                            for (u16 chunkIndex = 0; chunkIndex < frameHeader->chunksCountNew; chunkIndex++) {
+                                AseChunk* chunk = (AseChunk*)chunkData;
+                                assert(chunk->size >= 6);
 
+                                switch (chunk->type) {
+                                    case AseChunkType_ColorProfile: {
+                                        assert(chunk->colorProfile.type == AseColorProfileType_sRGB);
+                                    } break;
+
+                                    case AseChunkType_Layer: {
+                                        assert(chunk->layer.type == AseLayerType_Normal);
+                                    } break;
+
+                                    case AseChunkType_Cel: {
+                                        Texture texture = {};
+                                        assert(chunk->cel.type == AseCelType_CompressedImage);
+                                        u32 nonDataSize = sizeof(u32) + sizeof(AseChunkType) + sizeof(AseChunkCel);
+                                        assert(chunk->size >= nonDataSize);
+                                        void* compressedData = (void*)chunk + nonDataSize;
+                                        u32 compressedDataSize = chunk->size - nonDataSize;
+                                        texture.w = chunk->cel.width;
+                                        texture.h = chunk->cel.height;
+                                        i32 pixelsInTex = texture.w * texture.h;
+                                        texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
+                                        i32 bytesInTex = pixelsInTex * sizeof(u32);
+                                        int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
+                                        assert(decodeResult == bytesInTex);
+                                        arrpush(textures, texture);
+                                    } break;
+
+                                    case AseChunkType_Palette:
+                                    case AseChunkType_OldPalette:
+                                        break;
+
+                                    default: assert(!"unimplemented"); break;
+                                }
+
+                                chunkData += chunk->size;
+                            }
+                            frameData = chunkData;
+                        }
+                    }
                     CloseHandle(hfile);
                 }
-
-                arrpush(textures, texture);
-
             } while (FindNextFileA(findHandle, &findData));
         }
 
@@ -491,8 +688,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 u32* dest = atlas.pixels + (texRow + rect->y) * atlas.w + rect->x;
                 memcpy(dest, src, trimmed->w * sizeof(u32));
             }
-
-            stbi_image_free(texture->pixels);
         }
 
         D3D11_TEXTURE2D_DESC desc = {
@@ -571,8 +766,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {{4, 0}, {4, 4}}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {{0.0 + 2.5 + WUPerPixel * 0.5f, -3}, {5, 5}}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {{4 + WUPerPixel, 1}, {4, 4}}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {{-2, -3}, {5, 5}}));
     }
 
     for (;;) {
@@ -603,7 +798,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             GetKeyboardState(keyboard);
             u8 downMask = (1 << 7);
 
-            f32 deltaX = 0.001f;
+            f32 deltaX = 0.1f;
             if (keyboard[VK_LEFT] & downMask) {
                 d3d11.rects.storage.ptr[0].pos.x -= deltaX;
             }
@@ -691,7 +886,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 .MaxDepth = 1,
             };
 
-            FLOAT color[] = {0.0, 0, 0.0, 0};
+            FLOAT color[] = {0.01, 0.02, 0.03, 0};
             ID3D11DeviceContext_ClearRenderTargetView(d3d11.context, d3d11.rtView, color);
 
             ID3D11DeviceContext_IASetInputLayout(d3d11.context, d3d11.layout);
