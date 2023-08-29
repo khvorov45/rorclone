@@ -2,6 +2,7 @@
 #pragma clang diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
@@ -12,6 +13,7 @@
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
+#define tempMemoryBlock(arena) for (TempMemory _temp_ = beginTempMemory(arena); _temp_.arena; endTempMemory(&_temp_))
 
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_IMPLEMENTATION
@@ -83,11 +85,35 @@ static TempMemory beginTempMemory(Arena* arena) {
     return result;
 }
 
-static void endTempMemory(TempMemory temp) {
-    assert(temp.usedBefore <= temp.arena->used);
-    assert(temp.tempBefore == temp.arena->tempCount - 1);
-    temp.arena->used = temp.usedBefore;
-    temp.arena->tempCount -= 1;
+static void endTempMemory(TempMemory* temp) {
+    assert(temp->usedBefore <= temp->arena->used);
+    assert(temp->tempBefore == temp->arena->tempCount - 1);
+    temp->arena->used = temp->usedBefore;
+    temp->arena->tempCount -= 1;
+    *temp = (TempMemory) {};
+}
+
+//
+// SECTION String
+//
+
+typedef struct Str {
+    char* ptr;
+    i64 len;
+} Str;
+
+STBSP__ATTRIBUTE_FORMAT(2,3)
+static Str strfmt(Arena* arena, char* fmt, ...) {
+    char* out = arenaFreeptr(arena);
+
+    va_list va;
+    va_start(va, fmt);
+    int printResult = stbsp_vsnprintf(out, arenaFreesize(arena), fmt, va);
+    va_end(va);
+
+    arena->used += printResult + 1;
+    Str result = {out, printResult};
+    return result;
 }
 
 //
@@ -260,54 +286,51 @@ typedef struct Texture {
 void benchAlignment(Arena* arena) {
     // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
 
-    // NOTE(khvorov) Assume aligned
-    assert(((u64)arenaFreeptr(arena) & 3) == 0);
+    i64 misalignments[] = {0, 1};
+    for (u64 misalignmentIndex = 0; misalignmentIndex < arrayCount(misalignments); misalignmentIndex++) { tempMemoryBlock(arena) {
+        // NOTE(khvorov) Assume aligned
+        assert(((u64)arenaFreeptr(arena) & 3) == 0);
 
-    // NOTE(khvorov) Toggle misalignment
-    // arena->used += 1;
+        i64 thisMisalign = misalignments[misalignmentIndex];
+        arena->used += thisMisalign;
 
-    i64 floatsToAlloc[] = {100, 1000, 10000, 100000};
-    for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)arrayCount(floatsToAlloc); floatsToAllocIndex++) {
-        i64 floatCount = floatsToAlloc[floatsToAllocIndex];
-        u64 minDiff = UINT64_MAX;
-        u64 maxDiff = 0;
+        i64 floatsToAlloc[] = {100, 1000, 10000, 100000};
+        for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)arrayCount(floatsToAlloc); floatsToAllocIndex++) {
+            i64 floatCount = floatsToAlloc[floatsToAllocIndex];
+            u64 minDiff = UINT64_MAX;
+            u64 maxDiff = 0;
 
-        i64 timesToRun = 10000;
-        f32 sumOfSums = 0;
+            i64 timesToRun = 10000;
+            f32 sumOfSums = 0;
 
-        for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) {
-            TempMemory temp = beginTempMemory(arena);
+            for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) { tempMemoryBlock(arena) {
+                u64 before = __rdtsc();
 
-            u64 before = __rdtsc();
+                f32* arr = arenaAllocArray(arena, f32, floatCount);
+                for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
+                    arr[floatIndex] = (f32)floatIndex;
+                }
+                f32 sum = 0;
+                for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
+                    sum += arr[floatIndex];
+                }
 
-            f32* arr = arenaAllocArray(arena, f32, floatCount);
-            for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                arr[floatIndex] = (f32)floatIndex;
+                sumOfSums += sum;
+
+                u64 after = __rdtsc();
+                u64 diff = after - before;
+
+                minDiff = min(minDiff, diff);
+                maxDiff = max(maxDiff, diff);
+            }}
+
+            {
+                Str out = strfmt(arena, "mis: %llu floatCount: %llu, sum: %f, min: %llu, max: %llu\n", thisMisalign, floatCount, sumOfSums, minDiff, maxDiff);
+                OutputDebugStringA(out.ptr);
             }
-            f32 sum = 0;
-            for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                sum += arr[floatIndex];
-            }
-
-            sumOfSums += sum;
-
-            u64 after = __rdtsc();
-            u64 diff = after - before;
-
-            minDiff = min(minDiff, diff);
-            maxDiff = max(maxDiff, diff);
-
-            endTempMemory(temp);
         }
-
-        {
-            char* out = arenaFreeptr(arena);
-            stbsp_snprintf(out, arenaFreesize(arena), "floatCount: %llu, sum: %f, min: %llu, max: %llu\n", floatCount, sumOfSums, minDiff, maxDiff);
-            OutputDebugStringA(out);
-        }
-    }
+    }}
 }
-
 
 static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_BIND_FLAG flag) {
     D3D11_BUFFER_DESC desc = {
@@ -376,6 +399,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         arena->base = VirtualAlloc(0, arena->size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         assert(arena->base);
     }
+
+    if (false) benchAlignment(arena);
 
     struct {
         HWND hwnd;
@@ -534,9 +559,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assertHR(ID3D11Device_CreateInputLayoutResult);
     }
 
-    {
-        TempMemory temp = beginTempMemory(arena);
-
+    tempMemoryBlock(arena) {
         struct { Texture* ptr; i32 len; i32 cap; } textures = {.cap = 100};
         textures.ptr = arenaAllocArray(arena, Texture, textures.cap);
         {
@@ -545,12 +568,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             assert(findHandle != INVALID_HANDLE_VALUE);
             do {
                 char* name = findData.cFileName;
-                char* path = arenaFreeptr(arena);
-                arena->used += stbsp_snprintf(path, arenaFreesize(arena), "data/%s", name) + 1;
+                Str path = strfmt(arena, "data/%s", name);
 
                 {
                     HANDLE hfile = CreateFileA(
-                        path,
+                        path.ptr,
                         GENERIC_READ,
                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                         0,
@@ -562,13 +584,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                     LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hfile, &fileSize);
-                    assert(fileSize.QuadPart <= arenaFreesize(arena));
 
-                    void* fileContent = arenaFreeptr(arena);
+                    void* fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
                     DWORD bytesRead = 0;
                     ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
                     assert(bytesRead == fileSize.QuadPart);
-                    arena->used += bytesRead;
 
                     {
                         AseHeader* aseHeader = (AseHeader*)fileContent;
@@ -678,6 +698,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         }
         atlas.pixels = arenaAllocArray(arena, u32, atlas.w * atlas.h);
 
+        // TODO(khvorov) Retain packed rect positions in the atlas to be able to draw rects with specific textures
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
             Texture* texture = textures.ptr + rect->id;
@@ -712,8 +733,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Texture2D_Release(texture);
 
         d3d11.cbuffer.storage.texDim = (V2) {atlas.w, atlas.h};
-
-        endTempMemory(temp);
     }
 
     {
