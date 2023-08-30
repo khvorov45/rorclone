@@ -573,6 +573,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     struct {Rect* ptr; i64 len;} atlasLocations = {};
     tempMemoryBlock(memory.scratch) {
+
         struct { Texture* ptr; i32 len; i32 cap; } textures = {.cap = 100};
         textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.cap);
         {
@@ -688,8 +689,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             Texture* texture = texturesTrimmed + texInd;
             stbrp_rect* rect = rectsToPack + texInd;
             rect->id = texInd;
-            rect->w = texture->w;
-            rect->h = texture->h;
+            rect->w = texture->w + 2;
+            rect->h = texture->h + 2;
         }
 
         {
@@ -701,7 +702,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             assert(allRectsPacked);
         }
 
-        // TODO(khvorov) Add 1px gap around every texture
         Texture atlas = {};
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
@@ -720,11 +720,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             for (i32 texRow = 0; texRow < trimmed->h; texRow++) {
                 u32* src = trimmed->pixels + texRow * texture->w;
-                u32* dest = atlas.pixels + (texRow + rect->y) * atlas.w + rect->x;
+                u32* dest = atlas.pixels + (texRow + (rect->y + 1)) * atlas.w + (rect->x + 1);
                 memcpy(dest, src, trimmed->w * sizeof(u32));
             }
 
-            Rect atlasLocation = {{rect->x, rect->y}, {rect->w, rect->h}};
+            Rect atlasLocation = {{rect->x + 1, rect->y + 1}, {rect->w - 2, rect->h - 2}};
             atlasLocations.ptr[texInd] = atlasLocation;
         }
 
