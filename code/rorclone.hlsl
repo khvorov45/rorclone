@@ -1,7 +1,9 @@
 struct VS_INPUT {
-    uint   index : SV_VertexID;
-    float2 pos   : POSITION;
-    float2 dim   : DIM;
+    uint index : SV_VertexID;
+    float2 screenpos : SCREEN_POS;
+    float2 screendim : SCREEN_DIM;
+    float2 texpos : TEX_POS;
+    float2 texdim : TEX_DIM;
 };
 
 struct PS_INPUT {
@@ -27,10 +29,12 @@ Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
     float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
-    float2 posInCamera = input.pos - cameraPos;
+    float2 posInCamera = input.screenpos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
-    float2 dimInClip = input.dim / cameraHalfSpan;
+    float2 dimInClip = input.screendim / cameraHalfSpan;
     float2 scaleInClip = dimInClip * 0.5;
+    float2 posInUV = input.texpos / texDim;
+    float2 scaleInUV = input.texdim / texDim;
 
     float2 vertices[] = {
         {-1,  1},
@@ -46,7 +50,7 @@ PS_INPUT vs(VS_INPUT input) {
         {0, 1},
         {1, 1},
     };
-    float2 thisUV = uvs[input.index];
+    float2 thisUV = uvs[input.index] * scaleInUV + posInUV;
 
     float2 dimInPx = scaleInClip * windowDim;
     float2 pxHalfUV = 1 / dimInPx * 0.5;

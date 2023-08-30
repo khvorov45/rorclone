@@ -13,7 +13,7 @@
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
-#define tempMemoryBlock(arena) for (TempMemory _temp_ = beginTempMemory(arena); _temp_.arena; endTempMemory(&_temp_))
+#define tempMemoryBlock(arena_) for (TempMemory _temp_ = beginTempMemory(arena_); _temp_.arena; endTempMemory(&_temp_))
 
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_IMPLEMENTATION
@@ -256,6 +256,11 @@ typedef struct V2 {
     f32 x, y;
 } V2;
 
+typedef struct Rect {
+    V2 topleft;
+    V2 dim;
+} Rect;
+
 typedef struct Texture {
     u32* pixels;
     i32 w, h;
@@ -287,7 +292,7 @@ void benchAlignment(Arena* arena) {
     // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
 
     i64 misalignments[] = {0, 1};
-    for (u64 misalignmentIndex = 0; misalignmentIndex < arrayCount(misalignments); misalignmentIndex++) { tempMemoryBlock(arena) {
+    for (u64 misalignmentIndex = 0; misalignmentIndex < arrayCount(misalignments); misalignmentIndex++) tempMemoryBlock(arena) {
         // NOTE(khvorov) Assume aligned
         assert(((u64)arenaFreeptr(arena) & 3) == 0);
 
@@ -303,7 +308,7 @@ void benchAlignment(Arena* arena) {
             i64 timesToRun = 10000;
             f32 sumOfSums = 0;
 
-            for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) { tempMemoryBlock(arena) {
+            for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) tempMemoryBlock(arena) {
                 u64 before = __rdtsc();
 
                 f32* arr = arenaAllocArray(arena, f32, floatCount);
@@ -322,14 +327,14 @@ void benchAlignment(Arena* arena) {
 
                 minDiff = min(minDiff, diff);
                 maxDiff = max(maxDiff, diff);
-            }}
+            }
 
             {
                 Str out = strfmt(arena, "mis: %llu floatCount: %llu, sum: %f, min: %llu, max: %llu\n", thisMisalign, floatCount, sumOfSums, minDiff, maxDiff);
                 OutputDebugStringA(out.ptr);
             }
         }
-    }}
+    }
 }
 
 static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_BIND_FLAG flag) {
@@ -392,15 +397,20 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     unused(cmdline);
     unused(cmdshow);
 
-    Arena arena_ = {};
-    Arena* arena = &arena_;
+    Arena perm_ = {};
+    Arena scratch_ = {};
+    struct {Arena* perm; Arena* scratch;} memory = {&perm_, &scratch_};
     {
-        arena->size = 1 * 1024 * 1024 * 1024;
-        arena->base = VirtualAlloc(0, arena->size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        assert(arena->base);
+        i64 size = 1 * 1024 * 1024 * 1024;
+        void* ptr = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        assert(ptr);
+        memory.perm->base = ptr;
+        memory.perm->size = size / 4;
+        memory.scratch->base = ptr + memory.perm->size;
+        memory.scratch->size = size - memory.perm->size;
     }
 
-    if (false) benchAlignment(arena);
+    if (false) benchAlignment(memory.scratch);
 
     struct {
         HWND hwnd;
@@ -439,8 +449,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     }
 
     typedef struct RectInstance {
-        V2 pos;
-        V2 dim;
+        Rect screen;
+        Rect tex;
     } RectInstance;
 
     typedef struct CBuffer {
@@ -542,14 +552,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         d3d11.rects.storage.cap = 1024;
         d3d11.rects.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.storage.ptr) * d3d11.rects.storage.cap, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.storage.ptr = arenaAllocArray(arena, RectInstance, d3d11.rects.storage.cap);
+        d3d11.rects.storage.ptr = arenaAllocArray(memory.perm, RectInstance, d3d11.rects.storage.cap);
     }
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"DIM",      0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        };
+            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"SCREEN_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, tex.topleft),    D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, tex.dim),        D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        };        
 
         HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, globalShader_vs, sizeof(globalShader_vs), NULL, &d3d11.vshader);
         assertHR(ID3D11Device_CreateVertexShaderResult);
@@ -559,16 +571,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assertHR(ID3D11Device_CreateInputLayoutResult);
     }
 
-    tempMemoryBlock(arena) {
+    struct {Rect* ptr; i64 len;} atlasLocations = {};
+    tempMemoryBlock(memory.scratch) {
         struct { Texture* ptr; i32 len; i32 cap; } textures = {.cap = 100};
-        textures.ptr = arenaAllocArray(arena, Texture, textures.cap);
+        textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.cap);
         {
             WIN32_FIND_DATAA findData = {};
             HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
             assert(findHandle != INVALID_HANDLE_VALUE);
             do {
                 char* name = findData.cFileName;
-                Str path = strfmt(arena, "data/%s", name);
+                Str path = strfmt(memory.scratch, "data/%s", name);
 
                 {
                     HANDLE hfile = CreateFileA(
@@ -585,7 +598,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hfile, &fileSize);
 
-                    void* fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
+                    void* fileContent = arenaAllocArray(memory.scratch, u8, fileSize.QuadPart);
                     DWORD bytesRead = 0;
                     ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
                     assert(bytesRead == fileSize.QuadPart);
@@ -621,7 +634,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                                         texture.w = chunk->cel.width;
                                         texture.h = chunk->cel.height;
                                         i32 pixelsInTex = texture.w * texture.h;
-                                        texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
+                                        texture.pixels = arenaAllocArray(memory.scratch, u32, pixelsInTex);
                                         i32 bytesInTex = pixelsInTex * sizeof(u32);
                                         int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
                                         assert(decodeResult == bytesInTex);
@@ -645,7 +658,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             } while (FindNextFileA(findHandle, &findData));
         }
 
-        Texture* texturesTrimmed = arenaAllocArray(arena, Texture, textures.len);
+        Texture* texturesTrimmed = arenaAllocArray(memory.scratch, Texture, textures.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             Texture* texture = textures.ptr + texInd;
             i32 left = texture->w;
@@ -670,7 +683,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             trimmed->h = bottom - top + 1;
         }
 
-        stbrp_rect* rectsToPack = arenaAllocArray(arena, stbrp_rect, textures.len);
+        stbrp_rect* rectsToPack = arenaAllocArray(memory.scratch, stbrp_rect, textures.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             Texture* texture = texturesTrimmed + texInd;
             stbrp_rect* rect = rectsToPack + texInd;
@@ -681,7 +694,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         {
             struct {stbrp_node* ptr; i32 len;} nodes = {.len = 4096};
-            nodes.ptr = arenaAllocArray(arena, stbrp_node, nodes.len);
+            nodes.ptr = arenaAllocArray(memory.scratch, stbrp_node, nodes.len);
             stbrp_context ctx = {};
             stbrp_init_target(&ctx, nodes.len, INT_MAX, nodes.ptr, nodes.len);
             int allRectsPacked = stbrp_pack_rects(&ctx, rectsToPack, textures.len);
@@ -696,9 +709,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             atlas.w = max(atlas.w, rect->x + rect->w);
             atlas.h = max(atlas.h, rect->y + rect->h);
         }
-        atlas.pixels = arenaAllocArray(arena, u32, atlas.w * atlas.h);
+        atlas.pixels = arenaAllocArray(memory.scratch, u32, atlas.w * atlas.h);
 
-        // TODO(khvorov) Retain packed rect positions in the atlas to be able to draw rects with specific textures
+        atlasLocations.len = textures.len;
+        atlasLocations.ptr = arenaAllocArray(memory.perm, Rect, atlasLocations.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
             Texture* texture = textures.ptr + rect->id;
@@ -709,6 +723,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 u32* dest = atlas.pixels + (texRow + rect->y) * atlas.w + rect->x;
                 memcpy(dest, src, trimmed->w * sizeof(u32));
             }
+
+            Rect atlasLocation = {{rect->x, rect->y}, {rect->w, rect->h}};
+            atlasLocations.ptr[texInd] = atlasLocation;
         }
 
         D3D11_TEXTURE2D_DESC desc = {
@@ -785,12 +802,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {{4 + WUPerPixel, 1}, {4, 4}}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {{-2, -3}, {5, 5}}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{4 + WUPerPixel, 1}, {4, 4}}, .tex = atlasLocations.ptr[0]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{-2, -3}, {5, 5}}, .tex = atlasLocations.ptr[1]}));
     }
 
     for (;;) {
-        assert(arena->tempCount == 0);
+        assert(memory.scratch->used == 0);
+        assert(memory.scratch->tempCount == 0);
+        assert(memory.perm->tempCount == 0);
 
         for (MSG msg = {}; PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
@@ -819,10 +838,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             f32 deltaX = 0.1f;
             if (keyboard[VK_LEFT] & downMask) {
-                d3d11.rects.storage.ptr[0].pos.x -= deltaX;
+                d3d11.rects.storage.ptr[0].screen.topleft.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
-                d3d11.rects.storage.ptr[0].pos.x += deltaX;
+                d3d11.rects.storage.ptr[0].screen.topleft.x += deltaX;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
