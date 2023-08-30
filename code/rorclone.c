@@ -7,8 +7,8 @@
 
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
 #define assertHR(hr) assert(SUCCEEDED(hr))
-#define STR2(x) #x
-#define STR(x) STR2(x)
+#define STR(x) ((Str){x, sizeof(x) - 1})
+#define LIT(x) (int)x.len, x.ptr
 #define unused(x) ((x) = (x))
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
@@ -52,6 +52,8 @@ typedef int64_t  i64;
 typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
+
+typedef struct {u8* ptr; i64 len;} u8arr;
 
 //
 // SECTION Memory
@@ -285,9 +287,6 @@ typedef struct Texture {
 #include <dxgi1_2.h>
 #include <dxgidebug.h>
 
-#include "rorclone.hlsl_vs.h"
-#include "rorclone.hlsl_ps.h"
-
 void benchAlignment(Arena* arena) {
     // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
 
@@ -335,6 +334,37 @@ void benchAlignment(Arena* arena) {
             }
         }
     }
+}
+
+static u8arr readEntireFile(Str path, Arena* arena) {
+    Str path0 = {};
+    tempMemoryBlock(arena) {path0 = strfmt(arena, "%.*s", LIT(path));}
+
+    HANDLE hfile = CreateFileA(
+        path0.ptr,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        0,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        0
+    );
+    assert(hfile != INVALID_HANDLE_VALUE);
+
+    LARGE_INTEGER fileSize = {};
+    BOOL GetFileSizeExResult = GetFileSizeEx(hfile, &fileSize);
+    assert(GetFileSizeExResult);
+
+    void* fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
+    DWORD bytesRead = 0;
+    BOOL ReadFileResult = ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
+    assert(ReadFileResult);
+    assert(bytesRead == fileSize.QuadPart);
+
+    CloseHandle(hfile);
+
+    u8arr result = {fileContent, fileSize.QuadPart};
+    return result;
 }
 
 static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_BIND_FLAG flag) {
@@ -555,7 +585,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         d3d11.rects.storage.ptr = arenaAllocArray(memory.perm, RectInstance, d3d11.rects.storage.cap);
     }
 
-    {
+    tempMemoryBlock(memory.scratch) {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"SCREEN_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
@@ -563,11 +593,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, tex.dim),        D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };        
 
-        HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, globalShader_vs, sizeof(globalShader_vs), NULL, &d3d11.vshader);
+        u8arr shadervs = readEntireFile(STR("data/rorclone.hlsl_vs.bin"), memory.scratch);
+        u8arr shaderps = readEntireFile(STR("data/rorclone.hlsl_ps.bin"), memory.scratch);
+
+        HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, shadervs.ptr, shadervs.len, NULL, &d3d11.vshader);
         assertHR(ID3D11Device_CreateVertexShaderResult);
-        HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(d3d11.device, globalShader_ps, sizeof(globalShader_ps), NULL, &d3d11.pshader);
+        HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(d3d11.device, shaderps.ptr, shaderps.len, NULL, &d3d11.pshader);
         assertHR(ID3D11Device_CreatePixelShaderResult);
-        HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(d3d11.device, desc, arrayCount(desc), globalShader_vs, sizeof(globalShader_vs), &d3d11.layout);
+        HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(d3d11.device, desc, arrayCount(desc), shadervs.ptr, shadervs.len, &d3d11.layout);
         assertHR(ID3D11Device_CreateInputLayoutResult);
     }
 
@@ -585,29 +618,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 Str path = strfmt(memory.scratch, "data/%s", name);
 
                 {
-                    HANDLE hfile = CreateFileA(
-                        path.ptr,
-                        GENERIC_READ,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                        0,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        0
-                    );
-                    assert(hfile != INVALID_HANDLE_VALUE);
-
-                    LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hfile, &fileSize);
-
-                    void* fileContent = arenaAllocArray(memory.scratch, u8, fileSize.QuadPart);
-                    DWORD bytesRead = 0;
-                    ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
-                    assert(bytesRead == fileSize.QuadPart);
+                    u8arr fileContent = readEntireFile(path, memory.scratch);
 
                     {
-                        AseHeader* aseHeader = (AseHeader*)fileContent;
+                        // TODO(khvorov) Simplify pointer arithmetic?
+                        AseHeader* aseHeader = (AseHeader*)fileContent.ptr;
                         assert(aseHeader->magic == 0xA5E0);
-                        void* frameData = fileContent + sizeof(AseHeader);
+                        void* frameData = fileContent.ptr + sizeof(AseHeader);
                         for (i32 frameIndex = 0; frameIndex < aseHeader->frameCount; frameIndex++) {
                             AseFrameHeader* frameHeader = (AseFrameHeader*)frameData;
                             assert(frameHeader->magic == 0xF1FA);
@@ -654,7 +671,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             frameData = chunkData;
                         }
                     }
-                    CloseHandle(hfile);
                 }
             } while (FindNextFileA(findHandle, &findData));
         }

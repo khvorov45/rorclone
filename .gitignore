@@ -5,3 +5,4 @@ code/*hlsl_*
 *.sln
 *.rdbg
 *.png
+*.bin
