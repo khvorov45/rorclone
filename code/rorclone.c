@@ -2,7 +2,6 @@
 #pragma clang diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
 
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
