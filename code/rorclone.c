@@ -705,8 +705,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             Texture* texture = texturesTrimmed + texInd;
             stbrp_rect* rect = rectsToPack + texInd;
             rect->id = texInd;
-            rect->w = texture->w + 2;
-            rect->h = texture->h + 2;
+            rect->w = texture->w + 1;
+            rect->h = texture->h + 1;
         }
 
         {
@@ -725,6 +725,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             atlas.w = max(atlas.w, rect->x + rect->w);
             atlas.h = max(atlas.h, rect->y + rect->h);
         }
+        atlas.w += 1;
+        atlas.h += 1;
         atlas.pixels = arenaAllocArray(memory.scratch, u32, atlas.w * atlas.h);
 
         atlasLocations.len = textures.len;
@@ -740,7 +742,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 memcpy(dest, src, trimmed->w * sizeof(u32));
             }
 
-            Rect atlasLocation = {{rect->x + 1, rect->y + 1}, {rect->w - 2, rect->h - 2}};
+            Rect atlasLocation = {{rect->x + 1, rect->y + 1}, {rect->w - 1, rect->h - 1}};
             atlasLocations.ptr[texInd] = atlasLocation;
         }
 
