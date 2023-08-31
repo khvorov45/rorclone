@@ -125,38 +125,6 @@ static Str strfmt(Arena* arena, char* fmt, ...) {
 #pragma pack(push)
 #pragma pack(1)
 
-typedef struct AseHeader {
-    u32 fileSize;
-    u16 magic; // 0xA5E0
-    u16 frameCount;
-    u16 width;
-    u16 height;
-    u16 bitsPerPixel;
-    u32 flags;
-    u16 msBetweenFramesDepricated;
-    u32 zero1;
-    u32 zero2;
-    u8 palleteEntryIndexForTransparentColor;
-    u8 ignore[3];
-    u16 colorCount; // 0 means 256 for old sprites
-    u8 pixelWidth;
-    u8 pixelHeight;
-    i16 gridXPos;
-    i16 gridYPos;
-    u16 gridWidth;
-    u16 gridHeight;
-    u8 forFuture[84];
-} AseHeader;
-
-typedef struct AseFrameHeader {
-    u32 bytes;
-    u16 magic; // 0xF1FA
-    u16 chunkCountOld;
-    u16 frameDurationMS;
-    u8 forFuture[2];
-    u32 chunksCountNew;
-} AseFrameHeader;
-
 typedef enum AseChunkType: u16 {
     AseChunkType_OldPalette = 0x0004,
     AseChunkType_Layer = 0x2004,
@@ -247,6 +215,40 @@ typedef struct AseChunk {
         AseChunkCel cel;
     };
 } AseChunk;
+
+typedef struct AseFrame {
+    u32 bytes;
+    u16 magic; // 0xF1FA
+    u16 chunkCountOld;
+    u16 frameDurationMS;
+    u8 forFuture[2];
+    u32 chunksCountNew;
+    AseChunk chunks[];
+} AseFrame;
+
+typedef struct AseFile {
+    u32 fileSize;
+    u16 magic; // 0xA5E0
+    u16 frameCount;
+    u16 width;
+    u16 height;
+    u16 bitsPerPixel;
+    u32 flags;
+    u16 msBetweenFramesDepricated;
+    u32 zero1;
+    u32 zero2;
+    u8 palleteEntryIndexForTransparentColor;
+    u8 ignore[3];
+    u16 colorCount; // 0 means 256 for old sprites
+    u8 pixelWidth;
+    u8 pixelHeight;
+    i16 gridXPos;
+    i16 gridYPos;
+    u16 gridWidth;
+    u16 gridHeight;
+    u8 forFuture[84];
+    AseFrame frames[];
+} AseFile;
 
 #pragma pack(pop)
 
@@ -616,61 +618,57 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             do {
                 char* name = findData.cFileName;
                 Str path = strfmt(memory.scratch, "data/%s", name);
+                u8arr fileContent = readEntireFile(path, memory.scratch);
 
-                {
-                    u8arr fileContent = readEntireFile(path, memory.scratch);
+                AseFile* ase = (AseFile*)fileContent.ptr;
+                assert(ase->magic == 0xA5E0);
+                AseFrame* frame = ase->frames;
+                for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
+                    assert(frame->magic == 0xF1FA);
+                    AseChunk* chunk = frame->chunks;
+                    for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
+                        assert(chunk->size >= 6);
 
-                    {
-                        // TODO(khvorov) Simplify pointer arithmetic?
-                        AseHeader* aseHeader = (AseHeader*)fileContent.ptr;
-                        assert(aseHeader->magic == 0xA5E0);
-                        void* frameData = fileContent.ptr + sizeof(AseHeader);
-                        for (i32 frameIndex = 0; frameIndex < aseHeader->frameCount; frameIndex++) {
-                            AseFrameHeader* frameHeader = (AseFrameHeader*)frameData;
-                            assert(frameHeader->magic == 0xF1FA);
-                            void* chunkData = frameData + sizeof(AseFrameHeader);
-                            for (u16 chunkIndex = 0; chunkIndex < frameHeader->chunksCountNew; chunkIndex++) {
-                                AseChunk* chunk = (AseChunk*)chunkData;
-                                assert(chunk->size >= 6);
+                        switch (chunk->type) {
+                            case AseChunkType_ColorProfile: {
+                                assert(chunk->colorProfile.type == AseColorProfileType_sRGB);
+                            } break;
 
-                                switch (chunk->type) {
-                                    case AseChunkType_ColorProfile: {
-                                        assert(chunk->colorProfile.type == AseColorProfileType_sRGB);
-                                    } break;
+                            case AseChunkType_Layer: {
+                                assert(chunk->layer.type == AseLayerType_Normal);
+                            } break;
 
-                                    case AseChunkType_Layer: {
-                                        assert(chunk->layer.type == AseLayerType_Normal);
-                                    } break;
+                            case AseChunkType_Cel: {
+                                Texture texture = {};
+                                assert(chunk->cel.type == AseCelType_CompressedImage);
+                                u32 nonDataSize = sizeof(u32) + sizeof(AseChunkType) + sizeof(AseChunkCel);
+                                assert(chunk->size >= nonDataSize);
+                                void* compressedData = (void*)chunk + nonDataSize;
+                                u32 compressedDataSize = chunk->size - nonDataSize;
+                                texture.w = chunk->cel.width;
+                                texture.h = chunk->cel.height;
+                                i32 pixelsInTex = texture.w * texture.h;
+                                texture.pixels = arenaAllocArray(memory.scratch, u32, pixelsInTex);
+                                i32 bytesInTex = pixelsInTex * sizeof(u32);
+                                int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
+                                assert(decodeResult == bytesInTex);
+                                arrpush(textures, texture);
+                            } break;
 
-                                    case AseChunkType_Cel: {
-                                        Texture texture = {};
-                                        assert(chunk->cel.type == AseCelType_CompressedImage);
-                                        u32 nonDataSize = sizeof(u32) + sizeof(AseChunkType) + sizeof(AseChunkCel);
-                                        assert(chunk->size >= nonDataSize);
-                                        void* compressedData = (void*)chunk + nonDataSize;
-                                        u32 compressedDataSize = chunk->size - nonDataSize;
-                                        texture.w = chunk->cel.width;
-                                        texture.h = chunk->cel.height;
-                                        i32 pixelsInTex = texture.w * texture.h;
-                                        texture.pixels = arenaAllocArray(memory.scratch, u32, pixelsInTex);
-                                        i32 bytesInTex = pixelsInTex * sizeof(u32);
-                                        int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
-                                        assert(decodeResult == bytesInTex);
-                                        arrpush(textures, texture);
-                                    } break;
+                            case AseChunkType_Palette:
+                            case AseChunkType_OldPalette:
+                                break;
 
-                                    case AseChunkType_Palette:
-                                    case AseChunkType_OldPalette:
-                                        break;
+                            default: assert(!"unimplemented"); break;
+                        }
 
-                                    default: assert(!"unimplemented"); break;
-                                }
-
-                                chunkData += chunk->size;
-                            }
-                            frameData = chunkData;
+                        {
+                            void* temp = chunk;
+                            temp += chunk->size;
+                            chunk = temp;
                         }
                     }
+                    frame = (AseFrame*)chunk;
                 }
             } while (FindNextFileA(findHandle, &findData));
         }
