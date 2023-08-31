@@ -817,6 +817,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
+        // TODO(khvorov) Texture IDs
         arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{4 + WUPerPixel, 1}, {4, 4}}, .tex = atlasLocations.ptr[0]}));
         arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{-2, -3}, {5, 5}}, .tex = atlasLocations.ptr[1]}));
     }
