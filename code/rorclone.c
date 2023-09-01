@@ -295,6 +295,22 @@ typedef enum AtlasID {
 // SECTION Platform
 //
 
+typedef struct RectInstance {
+    V2 pos;
+    V2 offset;
+    Rect texInAtlas;
+    int mirrorX;
+    u8 pad[4];
+} RectInstance;
+
+typedef struct CBuffer {
+    V2 windowDim;
+    V2 texDim;
+    V2 cameraPos;
+    f32 cameraHalfSpanX;
+    f32 cameraHeightOverWidth;
+} CBuffer;
+
 // NOTE(khvorov) D3D11 initialisation code is based on this
 // https://gist.github.com/mmozeiko/5e727f845db182d468a34d524508ad5f
 
@@ -501,19 +517,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         toggleFullscreen(window.hwnd, &window.wpPrev);
     }
 
-    typedef struct RectInstance {
-        V2 screenpos;
-        Rect texInAtlas;
-    } RectInstance;
-
-    typedef struct CBuffer {
-        V2 windowDim;
-        V2 texDim;
-        V2 cameraPos;
-        f32 cameraHalfSpanX;
-        f32 cameraHeightOverWidth;
-    } CBuffer;
-
     struct {
         ID3D11Device* device;
         ID3D11DeviceContext* context;
@@ -610,9 +613,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     tempMemoryBlock(memory.scratch) {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screenpos),          D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos),                D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"OFFSET",     0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, offset),             D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_POS",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"MIRRORX",    0, DXGI_FORMAT_R32G32_SINT,  0, offsetof(RectInstance, mirrorX),            D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
 
         u8arr shadervs = readEntireFile(STR("data/rorclone.hlsl_vs.bin"), memory.scratch);
@@ -647,6 +652,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
                 u8arr fileContent = readEntireFile(path, memory.scratch);
+
+                // TODO(khvorov) Get sprite offsets from the source art probably
 
                 AseFile* ase = (AseFile*)fileContent.ptr;
                 assert(ase->magic == 0xA5E0);
@@ -842,8 +849,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 SrcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screenpos = {4 + SrcPxPerScreenPx, 1}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screenpos = {-2, -3}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {SrcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .mirrorX = true}));
     }
 
     for (;;) {
@@ -878,10 +885,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             f32 deltaX = 0.1f;
             if (keyboard[VK_LEFT] & downMask) {
-                d3d11.rects.storage.ptr[0].screenpos.x -= deltaX;
+                d3d11.rects.storage.ptr[0].mirrorX = true;
+                d3d11.rects.storage.ptr[0].pos.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
-                d3d11.rects.storage.ptr[0].screenpos.x += deltaX;
+                d3d11.rects.storage.ptr[0].mirrorX = false;
+                d3d11.rects.storage.ptr[0].pos.x += deltaX;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};

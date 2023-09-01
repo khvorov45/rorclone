@@ -1,8 +1,10 @@
 struct VS_INPUT {
     uint index : SV_VertexID;
-    float2 screenpos : SCREEN_POS;
+    float2 pos : SCREEN_POS;
+    float2 offset : OFFSET;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
+    int mirrorX : MIRRORX;
 };
 
 struct PS_INPUT {
@@ -28,7 +30,12 @@ Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
     float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
-    float2 posInCamera = input.screenpos - cameraPos;
+
+    float2 offsetFromCenter = input.texInAtlasDim / 2 - input.offset;
+    if (input.mirrorX) offsetFromCenter.x *= -1;
+
+    float2 offsetPos = input.pos + offsetFromCenter;
+    float2 posInCamera = offsetPos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
     float2 dimInClip = input.texInAtlasDim / cameraHalfSpan;
     float2 scaleInClip = dimInClip * 0.5;
@@ -49,7 +56,9 @@ PS_INPUT vs(VS_INPUT input) {
         {0, 1},
         {1, 1},
     };
-    float2 thisUV = uvs[input.index] * scaleInUV + posInUV;
+    float2 thisUV = uvs[input.index];
+    if (input.mirrorX) thisUV.x = (thisUV.x - 1) * -1;
+    thisUV = thisUV * scaleInUV + posInUV;
 
     float2 dimInPx = scaleInClip * windowDim;
     float2 pxHalfUV = 1 / dimInPx * 0.5;
