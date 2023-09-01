@@ -1,9 +1,8 @@
 struct VS_INPUT {
     uint index : SV_VertexID;
     float2 screenpos : SCREEN_POS;
-    float2 screendim : SCREEN_DIM;
-    float2 texpos : TEX_POS;
-    float2 texdim : TEX_DIM;
+    float2 texInAtlasTopleft : TEX_POS;
+    float2 texInAtlasDim : TEX_DIM;
 };
 
 struct PS_INPUT {
@@ -31,10 +30,10 @@ PS_INPUT vs(VS_INPUT input) {
     float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
     float2 posInCamera = input.screenpos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
-    float2 dimInClip = input.screendim / cameraHalfSpan;
+    float2 dimInClip = input.texInAtlasDim / cameraHalfSpan;
     float2 scaleInClip = dimInClip * 0.5;
-    float2 posInUV = input.texpos / texDim;
-    float2 scaleInUV = input.texdim / texDim;
+    float2 posInUV = input.texInAtlasTopleft / texDim;
+    float2 scaleInUV = input.texInAtlasDim / texDim;
 
     float2 vertices[] = {
         {-1,  1},

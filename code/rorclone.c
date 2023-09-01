@@ -502,8 +502,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     }
 
     typedef struct RectInstance {
-        Rect screen;
-        Rect tex;
+        V2 screenpos;
+        Rect texInAtlas;
     } RectInstance;
 
     typedef struct CBuffer {
@@ -610,11 +610,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     tempMemoryBlock(memory.scratch) {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"SCREEN_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screen.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_POS",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, tex.topleft),    D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, tex.dim),        D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        };        
+            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, screenpos),          D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        };
 
         u8arr shadervs = readEntireFile(STR("data/rorclone.hlsl_vs.bin"), memory.scratch);
         u8arr shaderps = readEntireFile(STR("data/rorclone.hlsl_ps.bin"), memory.scratch);
@@ -642,7 +641,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 // TODO(khvorov) Autogen?
                 AtlasID thisID = 0;
-                if      (strstarts(nameStr, STR("commando"))) { thisID = AtlasID_commando;} 
+                if      (strstarts(nameStr, STR("commando"))) { thisID = AtlasID_commando;}
                 else if (strstarts(nameStr, STR("lemurian"))) { thisID = AtlasID_lemurian;}
                 else {assert(!"unrecognized file");}
 
@@ -691,11 +690,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             default: assert(!"unimplemented"); break;
                         }
 
-                        {
-                            void* temp = chunk;
-                            temp += chunk->size;
-                            chunk = temp;
-                        }
+                        chunk = (void*)chunk + chunk->size;
                     }
                     frame = (AseFrame*)chunk;
                 }
@@ -837,18 +832,18 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    d3d11.cbuffer.storage.cameraHalfSpanX = 10;
+    d3d11.cbuffer.storage.cameraHalfSpanX = 100;
 
-    // TODO(khvorov) Better way to move by pixels
+    // TODO(khvorov) Better way to move by screen pixels
     {
         RECT rect = {};
         GetClientRect(window.hwnd, &rect);
         DWORD windowWidth = rect.right - rect.left;
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
-        f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
+        f32 SrcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{4 + WUPerPixel, 1}, {4, 4}}, .tex = atlasLocations.ptr[AtlasID_commando]}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{-2, -3}, {5, 5}}, .tex = atlasLocations.ptr[AtlasID_commando]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screenpos = {4 + SrcPxPerScreenPx, 1}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screenpos = {-2, -3}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian]}));
     }
 
     for (;;) {
@@ -883,10 +878,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             f32 deltaX = 0.1f;
             if (keyboard[VK_LEFT] & downMask) {
-                d3d11.rects.storage.ptr[0].screen.topleft.x -= deltaX;
+                d3d11.rects.storage.ptr[0].screenpos.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
-                d3d11.rects.storage.ptr[0].screen.topleft.x += deltaX;
+                d3d11.rects.storage.ptr[0].screenpos.x += deltaX;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
