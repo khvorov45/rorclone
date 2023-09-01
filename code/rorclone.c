@@ -94,6 +94,12 @@ static void endTempMemory(TempMemory* temp) {
     *temp = (TempMemory) {};
 }
 
+static bool memeq(void* ptr1, void* ptr2, i64 len) {
+    int memcmpResult = memcmp(ptr1, ptr2, len);
+    bool result = memcmpResult == 0;
+    return result;
+}
+
 //
 // SECTION String
 //
@@ -114,6 +120,14 @@ static Str strfmt(Arena* arena, char* fmt, ...) {
 
     arena->used += printResult + 1;
     Str result = {out, printResult};
+    return result;
+}
+
+static bool strstarts(Str str, Str start) {
+    bool result = false;
+    if (str.len >= start.len) {
+        result = memeq(str.ptr, start.ptr, start.len);
+    }
     return result;
 }
 
@@ -268,6 +282,14 @@ typedef struct Texture {
     u32* pixels;
     i32 w, h;
 } Texture;
+
+// TODO(khvorov) Auto generate?
+typedef enum AtlasID {
+    AtlasID_commando,
+    AtlasID_lemurian,
+
+    AtlasID_Count,
+} AtlasID;
 
 //
 // SECTION Platform
@@ -608,14 +630,22 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     struct {Rect* ptr; i64 len;} atlasLocations = {};
     tempMemoryBlock(memory.scratch) {
 
-        struct { Texture* ptr; i32 len; i32 cap; } textures = {.cap = 100};
-        textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.cap);
+        struct { Texture* ptr; i32 len; } textures = {.len = AtlasID_Count};
+        textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.len);
         {
             WIN32_FIND_DATAA findData = {};
             HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
             assert(findHandle != INVALID_HANDLE_VALUE);
             do {
                 char* name = findData.cFileName;
+                Str nameStr = {name, strlen(name)};
+
+                // TODO(khvorov) Autogen?
+                AtlasID thisID = 0;
+                if      (strstarts(nameStr, STR("commando"))) { thisID = AtlasID_commando;} 
+                else if (strstarts(nameStr, STR("lemurian"))) { thisID = AtlasID_lemurian;}
+                else {assert(!"unrecognized file");}
+
                 Str path = strfmt(memory.scratch, "data/%s", name);
                 u8arr fileContent = readEntireFile(path, memory.scratch);
 
@@ -651,7 +681,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                                 i32 bytesInTex = pixelsInTex * sizeof(u32);
                                 int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
                                 assert(decodeResult == bytesInTex);
-                                arrpush(textures, texture);
+                                textures.ptr[thisID] = texture;
                             } break;
 
                             case AseChunkType_Palette:
@@ -817,9 +847,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 WUPerPixel = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        // TODO(khvorov) Texture IDs
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{4 + WUPerPixel, 1}, {4, 4}}, .tex = atlasLocations.ptr[0]}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{-2, -3}, {5, 5}}, .tex = atlasLocations.ptr[1]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{4 + WUPerPixel, 1}, {4, 4}}, .tex = atlasLocations.ptr[AtlasID_commando]}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.screen = {{-2, -3}, {5, 5}}, .tex = atlasLocations.ptr[AtlasID_commando]}));
     }
 
     for (;;) {
