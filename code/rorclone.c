@@ -123,6 +123,14 @@ static Str strfmt(Arena* arena, char* fmt, ...) {
     return result;
 }
 
+static bool streq(Str str1, Str str2) {
+    bool result = false;
+    if (str1.len == str2.len) {
+        result = memeq(str1.ptr, str2.ptr, str1.len);
+    }
+    return result;
+}
+
 static bool strstarts(Str str, Str start) {
     bool result = false;
     if (str.len >= start.len) {
@@ -273,6 +281,11 @@ typedef struct V2 {
     f32 x, y;
 } V2;
 
+typedef union V4 {
+    struct {f32 x, y, z, w;};
+    struct {f32 r, g, b, a;};
+} V4;
+
 typedef struct Rect {
     V2 topleft;
     V2 dim;
@@ -285,6 +298,8 @@ typedef struct Texture {
 
 // TODO(khvorov) Auto generate?
 typedef enum AtlasID {
+    AtlasID_whitepx,
+
     AtlasID_commando,
     AtlasID_lemurian,
 
@@ -296,11 +311,10 @@ typedef enum AtlasID {
 //
 
 typedef struct RectInstance {
-    V2 pos;
-    V2 offset;
+    V2 pos, dimOrOffset;
     Rect texInAtlas;
-    int mirrorX;
-    u8 pad[4];
+    V4 color;
+    int mirrorX, posIsWorld;
 } RectInstance;
 
 typedef struct CBuffer {
@@ -613,11 +627,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     tempMemoryBlock(memory.scratch) {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"SCREEN_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos),                D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"OFFSET",     0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, offset),             D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_POS",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_DIM",    0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.dim),     D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"MIRRORX",    0, DXGI_FORMAT_R32G32_SINT,  0, offsetof(RectInstance, mirrorX),            D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"DIM_OR_OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, dimOrOffset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(RectInstance, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(RectInstance, mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"POS_IS_WORLD", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(RectInstance, posIsWorld), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
 
         u8arr shadervs = readEntireFile(STR("data/rorclone.hlsl_vs.bin"), memory.scratch);
@@ -646,8 +662,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 // TODO(khvorov) Autogen?
                 AtlasID thisID = 0;
-                if      (strstarts(nameStr, STR("commando"))) { thisID = AtlasID_commando;}
-                else if (strstarts(nameStr, STR("lemurian"))) { thisID = AtlasID_lemurian;}
+                if      (streq(nameStr, STR("whitepx.aseprite")))  {thisID = AtlasID_whitepx;}
+                else if (streq(nameStr, STR("commando.aseprite"))) {thisID = AtlasID_commando;}
+                else if (streq(nameStr, STR("lemurian.aseprite"))) {thisID = AtlasID_lemurian;}
                 else {assert(!"unrecognized file");}
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
@@ -849,8 +866,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
         f32 SrcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {SrcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .mirrorX = true}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .color = {.r = 1, .g = 1, .b = 1, .a = 1}, .posIsWorld = true}));
+        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {SrcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando],  .color = {.r = 1, .g = 1, .b = 1, .a = 1}, .mirrorX = true, .posIsWorld = true}));
+
+        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {10, 20}, .dimOrOffset = {2.51, 10}, .texInAtlas = atlasLocations.ptr[AtlasID_whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}, .posIsWorld = false}));
     }
 
     for (;;) {

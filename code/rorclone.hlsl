@@ -1,10 +1,12 @@
 struct VS_INPUT {
     uint index : SV_VertexID;
-    float2 pos : SCREEN_POS;
-    float2 offset : OFFSET;
+    float2 pos : POS;
+    float2 dimOrOffset : DIM_OR_OFFSET;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
+    float4 color : COLOR;
     int mirrorX : MIRRORX;
+    int posIsWorld : POS_IS_WORLD;
 };
 
 struct PS_INPUT {
@@ -18,7 +20,7 @@ struct PS_INPUT {
 
 cbuffer cbuffer0 : register(b0) {
     float2 windowDim;
-    float2 texDim;
+    float2 atlasDim;
     float2 cameraPos;
     float cameraHalfSpanX;
     float cameraHeightOverWidth;
@@ -29,18 +31,35 @@ sampler sampler0 : register(s0);
 Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
-    float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
 
-    float2 offsetFromCenter = input.texInAtlasDim / 2 - input.offset;
-    if (input.mirrorX) offsetFromCenter.x *= -1;
+    float2 posInClip;
+    float2 dimInClip;
+    if (input.posIsWorld) {
+        float2 inputOffset = input.dimOrOffset;
+        float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
 
-    float2 offsetPos = input.pos + offsetFromCenter;
-    float2 posInCamera = offsetPos - cameraPos;
-    float2 posInClip = posInCamera / cameraHalfSpan;
-    float2 dimInClip = input.texInAtlasDim / cameraHalfSpan;
+        float2 offsetForCenter = input.texInAtlasDim / 2 - inputOffset;
+        offsetForCenter.y *= -1;
+        if (input.mirrorX) offsetForCenter.x *= -1;
+
+        float2 offsetPos = input.pos + offsetForCenter;
+        float2 posInCamera = offsetPos - cameraPos;
+        posInClip = posInCamera / cameraHalfSpan;
+        dimInClip = input.texInAtlasDim / cameraHalfSpan;
+    } else {
+        float2 inputDim = input.dimOrOffset;
+
+        float2 offsetForCenter = inputDim / 2;
+        float2 offsetPos = input.pos + offsetForCenter;
+        posInClip = offsetPos / windowDim * 2 - 1;
+        posInClip.y *= -1;
+
+        dimInClip = inputDim / windowDim * 2;
+    }
+
     float2 scaleInClip = dimInClip * 0.5;
-    float2 posInUV = input.texInAtlasTopleft / texDim;
-    float2 scaleInUV = input.texInAtlasDim / texDim;
+    float2 posInUV = input.texInAtlasTopleft / atlasDim;
+    float2 scaleInUV = input.texInAtlasDim / atlasDim;
 
     float2 vertices[] = {
         {-1,  1},
@@ -61,7 +80,7 @@ PS_INPUT vs(VS_INPUT input) {
     thisUV = thisUV * scaleInUV + posInUV;
 
     float2 dimInPx = scaleInClip * windowDim;
-    float2 pxHalfUV = 1 / dimInPx * 0.5;
+    float2 pxHalfUV = 0.5 / dimInPx * scaleInUV;
 
     PS_INPUT output;
     output.pos = float4(thisVertex, 0, 1);
@@ -69,7 +88,7 @@ PS_INPUT vs(VS_INPUT input) {
     output.uvleft = thisUV.x - pxHalfUV.x;
     output.uvbottom = thisUV.y + pxHalfUV.y;
     output.uvright = thisUV.x + pxHalfUV.x;
-    output.color = float4(1, 1, 1, 1);
+    output.color = input.color;
     return output;
 }
 
@@ -79,10 +98,10 @@ float4 ps(PS_INPUT input) : SV_TARGET {
     float4 texColorbottomleft = texture0.Sample(sampler0, float2(input.uvleft, input.uvbottom));
     float4 texColorbottomright = texture0.Sample(sampler0, float2(input.uvright, input.uvbottom));
 
-    float2 texcoordtopleft = float2(input.uvleft, input.uvtop) * texDim;
+    float2 texcoordtopleft = float2(input.uvleft, input.uvtop) * atlasDim;
     float2 blendfactorTexcoord = ceil(texcoordtopleft) - texcoordtopleft;
 
-    float2 pxDimTexcoord = float2(input.uvright - input.uvleft, input.uvbottom - input.uvtop) * texDim;
+    float2 pxDimTexcoord = float2(input.uvright - input.uvleft, input.uvbottom - input.uvtop) * atlasDim;
     float2 blendfactor = clamp(float2(blendfactorTexcoord) / pxDimTexcoord, 0, 1);
 
     float4 blendedtop = blendfactor.x * texColortopleft + (1 - blendfactor.x) * texColortopright;
