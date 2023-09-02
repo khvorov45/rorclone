@@ -299,6 +299,7 @@ typedef struct Texture {
 // TODO(khvorov) Auto generate?
 typedef enum AtlasID {
     AtlasID_whitepx,
+    AtlasID_font,
 
     AtlasID_commando,
     AtlasID_lemurian,
@@ -310,12 +311,18 @@ typedef enum AtlasID {
 // SECTION Platform
 //
 
-typedef struct RectInstance {
-    V2 pos, dimOrOffset;
+typedef struct SpriteRect {
+    V2 pos, offset;
+    Rect texInAtlas;
+    V4 color; // TODO(khvorov) Do we need color?
+    int mirrorX;
+} SpriteRect;
+
+typedef struct ScreenRect {
+    V2 pos, dim;
     Rect texInAtlas;
     V4 color;
-    int mirrorX, posIsWorld;
-} RectInstance;
+} ScreenRect;
 
 typedef struct CBuffer {
     V2 windowDim;
@@ -435,6 +442,65 @@ static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_
     return result;
 }
 
+typedef struct D3D11VSPS {
+    ID3D11InputLayout* layout;
+    ID3D11VertexShader* vshader;
+    ID3D11PixelShader* pshader;
+} D3D11VSPS;
+
+static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, Arena* arena, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, Str filename) {
+    D3D11VSPS result = {};
+    tempMemoryBlock(arena) {
+        u8arr shadervs = readEntireFile(strfmt(arena, "data/%.*s_vs.bin", LIT(filename)), arena);
+        u8arr shaderps = readEntireFile(strfmt(arena, "data/%.*s_ps.bin", LIT(filename)), arena);
+
+        HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(device, shadervs.ptr, shadervs.len, NULL, &result.vshader);
+        assertHR(ID3D11Device_CreateVertexShaderResult);
+        HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(device, shaderps.ptr, shaderps.len, NULL, &result.pshader);
+        assertHR(ID3D11Device_CreatePixelShaderResult);
+        HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(device, desc, descCount, shadervs.ptr, shadervs.len, &result.layout);
+        assertHR(ID3D11Device_CreateInputLayoutResult);
+    }
+    return result;
+}
+
+static void d3d11DestroyVSPS(D3D11VSPS vsps) {
+    vsps.layout->lpVtbl->Release(vsps.layout);
+    vsps.vshader->lpVtbl->Release(vsps.vshader);
+    vsps.pshader->lpVtbl->Release(vsps.pshader);
+}
+
+static void d3d11DrawRects(
+    ID3D11DeviceContext* context, D3D11VSPS vsps, UINT rectSize, ID3D11Buffer* vbuf, ID3D11Buffer* cbuf, D3D11_VIEWPORT* viewport,
+    ID3D11RasterizerState* rasterizer, ID3D11SamplerState* sampler, ID3D11ShaderResourceView* textureView,
+    ID3D11BlendState* blendState, ID3D11RenderTargetView* rtView, i64 rectCount
+) {
+    ID3D11DeviceContext_IASetInputLayout(context, vsps.layout);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    {
+        UINT stride = rectSize;
+        UINT offset = 0;
+        ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &vbuf, &stride, &offset);
+    }
+
+    context->lpVtbl->VSSetConstantBuffers(context, 0, 1, &cbuf);
+    context->lpVtbl->PSSetConstantBuffers(context, 0, 1, &cbuf);
+
+    ID3D11DeviceContext_VSSetShader(context, vsps.vshader, NULL, 0);
+
+    ID3D11DeviceContext_RSSetViewports(context, 1, viewport);
+    ID3D11DeviceContext_RSSetState(context, rasterizer);
+
+    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
+    ID3D11DeviceContext_PSSetShaderResources(context, 0, 1, &textureView);
+    ID3D11DeviceContext_PSSetShader(context, vsps.pshader, NULL, 0);
+
+    ID3D11DeviceContext_OMSetBlendState(context, blendState, NULL, ~0U);
+    ID3D11DeviceContext_OMSetRenderTargets(context, 1, &rtView, 0);
+
+    ID3D11DeviceContext_DrawInstanced(context, 4, rectCount, 0, 0);
+}
+
 static void fatalError(const char* message) {
     MessageBoxA(NULL, message, "Error", MB_ICONEXCLAMATION);
     ExitProcess(0);
@@ -535,13 +601,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device* device;
         ID3D11DeviceContext* context;
         IDXGISwapChain1* swapChain;
-        struct {ID3D11Buffer* buf; struct {RectInstance* ptr; i64 len; i64 cap;} storage;} rects;
+        // TODO(khvorov) Compress better?
+        struct {
+            struct { ID3D11SamplerState* sampler; D3D11VSPS vsps; ID3D11Buffer* buf; struct {SpriteRect* ptr; i64 len; i64 cap;} storage; } sprite;
+            struct { ID3D11SamplerState* sampler; D3D11VSPS vsps; ID3D11Buffer* buf; struct {ScreenRect* ptr; i64 len; i64 cap;} storage; } screen;
+        } rects;
         struct {ID3D11Buffer* buf; CBuffer storage;} cbuffer;
-        ID3D11InputLayout* layout;
-        ID3D11VertexShader* vshader;
-        ID3D11PixelShader* pshader;
         ID3D11ShaderResourceView* textureView;
-        ID3D11SamplerState* sampler;
         ID3D11BlendState* blendState;
         ID3D11RasterizerState* rasterizerState;
         ID3D11RenderTargetView* rtView;
@@ -619,39 +685,107 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         IDXGIDevice_Release(dxgiDevice);
     }
 
+    // TODO(khvorov) Compress?
     {
-        d3d11.rects.storage.cap = 1024;
-        d3d11.rects.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.storage.ptr) * d3d11.rects.storage.cap, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.storage.ptr = arenaAllocArray(memory.perm, RectInstance, d3d11.rects.storage.cap);
+        d3d11.rects.sprite.storage.cap = 1024;
+        d3d11.rects.sprite.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.sprite.storage.ptr) * d3d11.rects.sprite.storage.cap, D3D11_BIND_VERTEX_BUFFER);
+        d3d11.rects.sprite.storage.ptr = arenaAllocArray(memory.perm, SpriteRect, d3d11.rects.sprite.storage.cap);
+    }
+    {
+        d3d11.rects.screen.storage.cap = 1024;
+        d3d11.rects.screen.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.screen.storage.ptr) * d3d11.rects.screen.storage.cap, D3D11_BIND_VERTEX_BUFFER);
+        d3d11.rects.screen.storage.ptr = arenaAllocArray(memory.perm, ScreenRect, d3d11.rects.screen.storage.cap);
     }
 
-    tempMemoryBlock(memory.scratch) {
+    {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"DIM_OR_OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, dimOrOffset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(RectInstance, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(RectInstance, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(RectInstance, mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"POS_IS_WORLD", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(RectInstance, posIsWorld), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(SpriteRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(SpriteRect, mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
+        d3d11.rects.sprite.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("rorclone_sprite.hlsl"));
+    }
 
-        u8arr shadervs = readEntireFile(STR("data/rorclone.hlsl_vs.bin"), memory.scratch);
-        u8arr shaderps = readEntireFile(STR("data/rorclone.hlsl_ps.bin"), memory.scratch);
-
-        HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(d3d11.device, shadervs.ptr, shadervs.len, NULL, &d3d11.vshader);
-        assertHR(ID3D11Device_CreateVertexShaderResult);
-        HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(d3d11.device, shaderps.ptr, shaderps.len, NULL, &d3d11.pshader);
-        assertHR(ID3D11Device_CreatePixelShaderResult);
-        HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(d3d11.device, desc, arrayCount(desc), shadervs.ptr, shadervs.len, &d3d11.layout);
-        assertHR(ID3D11Device_CreateInputLayoutResult);
+    {
+        D3D11_INPUT_ELEMENT_DESC desc[] = {
+            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        };
+        d3d11.rects.screen.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("rorclone_screen.hlsl"));
     }
 
     struct {Rect* ptr; i64 len;} atlasLocations = {};
     tempMemoryBlock(memory.scratch) {
 
+        struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 1};
+        font.tex.w = font.glyphW * font.glyphCount + (font.glyphCount - 1) * font.gapW;
+        font.tex.h = font.glyphH;
+        font.tex.pixels = arenaAllocArray(memory.scratch, u32, font.tex.w * font.tex.h);
+        {
+            // Taken from https://github.com/nakst/luigi/blob/main/luigi.h
+            // Taken from https://commons.wikimedia.org/wiki/File:Codepage-437.png
+            // Public domain.
+
+            const uint64_t _uiFont[] = {
+                0x0000000000000000UL, 0x0000000000000000UL, 0xBD8181A5817E0000UL, 0x000000007E818199UL, 0xC3FFFFDBFF7E0000UL, 0x000000007EFFFFE7UL, 0x7F7F7F3600000000UL, 0x00000000081C3E7FUL,
+                0x7F3E1C0800000000UL, 0x0000000000081C3EUL, 0xE7E73C3C18000000UL, 0x000000003C1818E7UL, 0xFFFF7E3C18000000UL, 0x000000003C18187EUL, 0x3C18000000000000UL, 0x000000000000183CUL,
+                0xC3E7FFFFFFFFFFFFUL, 0xFFFFFFFFFFFFE7C3UL, 0x42663C0000000000UL, 0x00000000003C6642UL, 0xBD99C3FFFFFFFFFFUL, 0xFFFFFFFFFFC399BDUL, 0x331E4C5870780000UL, 0x000000001E333333UL,
+                0x3C666666663C0000UL, 0x0000000018187E18UL, 0x0C0C0CFCCCFC0000UL, 0x00000000070F0E0CUL, 0xC6C6C6FEC6FE0000UL, 0x0000000367E7E6C6UL, 0xE73CDB1818000000UL, 0x000000001818DB3CUL,
+                0x1F7F1F0F07030100UL, 0x000000000103070FUL, 0x7C7F7C7870604000UL, 0x0000000040607078UL, 0x1818187E3C180000UL, 0x0000000000183C7EUL, 0x6666666666660000UL, 0x0000000066660066UL,
+                0xD8DEDBDBDBFE0000UL, 0x00000000D8D8D8D8UL, 0x6363361C06633E00UL, 0x0000003E63301C36UL, 0x0000000000000000UL, 0x000000007F7F7F7FUL, 0x1818187E3C180000UL, 0x000000007E183C7EUL,
+                0x1818187E3C180000UL, 0x0000000018181818UL, 0x1818181818180000UL, 0x00000000183C7E18UL, 0x7F30180000000000UL, 0x0000000000001830UL, 0x7F060C0000000000UL, 0x0000000000000C06UL,
+                0x0303000000000000UL, 0x0000000000007F03UL, 0xFF66240000000000UL, 0x0000000000002466UL, 0x3E1C1C0800000000UL, 0x00000000007F7F3EUL, 0x3E3E7F7F00000000UL, 0x0000000000081C1CUL,
+                0x0000000000000000UL, 0x0000000000000000UL, 0x18183C3C3C180000UL, 0x0000000018180018UL, 0x0000002466666600UL, 0x0000000000000000UL, 0x36367F3636000000UL, 0x0000000036367F36UL,
+                0x603E0343633E1818UL, 0x000018183E636160UL, 0x1830634300000000UL, 0x000000006163060CUL, 0x3B6E1C36361C0000UL, 0x000000006E333333UL, 0x000000060C0C0C00UL, 0x0000000000000000UL,
+                0x0C0C0C0C18300000UL, 0x0000000030180C0CUL, 0x30303030180C0000UL, 0x000000000C183030UL, 0xFF3C660000000000UL, 0x000000000000663CUL, 0x7E18180000000000UL, 0x0000000000001818UL,
+                0x0000000000000000UL, 0x0000000C18181800UL, 0x7F00000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000018180000UL, 0x1830604000000000UL, 0x000000000103060CUL,
+                0xDBDBC3C3663C0000UL, 0x000000003C66C3C3UL, 0x1818181E1C180000UL, 0x000000007E181818UL, 0x0C183060633E0000UL, 0x000000007F630306UL, 0x603C6060633E0000UL, 0x000000003E636060UL,
+                0x7F33363C38300000UL, 0x0000000078303030UL, 0x603F0303037F0000UL, 0x000000003E636060UL, 0x633F0303061C0000UL, 0x000000003E636363UL, 0x18306060637F0000UL, 0x000000000C0C0C0CUL,
+                0x633E6363633E0000UL, 0x000000003E636363UL, 0x607E6363633E0000UL, 0x000000001E306060UL, 0x0000181800000000UL, 0x0000000000181800UL, 0x0000181800000000UL, 0x000000000C181800UL,
+                0x060C183060000000UL, 0x000000006030180CUL, 0x00007E0000000000UL, 0x000000000000007EUL, 0x6030180C06000000UL, 0x00000000060C1830UL, 0x18183063633E0000UL, 0x0000000018180018UL,
+                0x7B7B63633E000000UL, 0x000000003E033B7BUL, 0x7F6363361C080000UL, 0x0000000063636363UL, 0x663E6666663F0000UL, 0x000000003F666666UL, 0x03030343663C0000UL, 0x000000003C664303UL,
+                0x66666666361F0000UL, 0x000000001F366666UL, 0x161E1646667F0000UL, 0x000000007F664606UL, 0x161E1646667F0000UL, 0x000000000F060606UL, 0x7B030343663C0000UL, 0x000000005C666363UL,
+                0x637F636363630000UL, 0x0000000063636363UL, 0x18181818183C0000UL, 0x000000003C181818UL, 0x3030303030780000UL, 0x000000001E333333UL, 0x1E1E366666670000UL, 0x0000000067666636UL,
+                0x06060606060F0000UL, 0x000000007F664606UL, 0xC3DBFFFFE7C30000UL, 0x00000000C3C3C3C3UL, 0x737B7F6F67630000UL, 0x0000000063636363UL, 0x63636363633E0000UL, 0x000000003E636363UL,
+                0x063E6666663F0000UL, 0x000000000F060606UL, 0x63636363633E0000UL, 0x000070303E7B6B63UL, 0x363E6666663F0000UL, 0x0000000067666666UL, 0x301C0663633E0000UL, 0x000000003E636360UL,
+                0x18181899DBFF0000UL, 0x000000003C181818UL, 0x6363636363630000UL, 0x000000003E636363UL, 0xC3C3C3C3C3C30000UL, 0x00000000183C66C3UL, 0xDBC3C3C3C3C30000UL, 0x000000006666FFDBUL,
+                0x18183C66C3C30000UL, 0x00000000C3C3663CUL, 0x183C66C3C3C30000UL, 0x000000003C181818UL, 0x0C183061C3FF0000UL, 0x00000000FFC38306UL, 0x0C0C0C0C0C3C0000UL, 0x000000003C0C0C0CUL,
+                0x1C0E070301000000UL, 0x0000000040607038UL, 0x30303030303C0000UL, 0x000000003C303030UL, 0x0000000063361C08UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000FF0000000000UL,
+                0x0000000000180C0CUL, 0x0000000000000000UL, 0x3E301E0000000000UL, 0x000000006E333333UL, 0x66361E0606070000UL, 0x000000003E666666UL, 0x03633E0000000000UL, 0x000000003E630303UL,
+                0x33363C3030380000UL, 0x000000006E333333UL, 0x7F633E0000000000UL, 0x000000003E630303UL, 0x060F0626361C0000UL, 0x000000000F060606UL, 0x33336E0000000000UL, 0x001E33303E333333UL,
+                0x666E360606070000UL, 0x0000000067666666UL, 0x18181C0018180000UL, 0x000000003C181818UL, 0x6060700060600000UL, 0x003C666660606060UL, 0x1E36660606070000UL, 0x000000006766361EUL,
+                0x18181818181C0000UL, 0x000000003C181818UL, 0xDBFF670000000000UL, 0x00000000DBDBDBDBUL, 0x66663B0000000000UL, 0x0000000066666666UL, 0x63633E0000000000UL, 0x000000003E636363UL,
+                0x66663B0000000000UL, 0x000F06063E666666UL, 0x33336E0000000000UL, 0x007830303E333333UL, 0x666E3B0000000000UL, 0x000000000F060606UL, 0x06633E0000000000UL, 0x000000003E63301CUL,
+                0x0C0C3F0C0C080000UL, 0x00000000386C0C0CUL, 0x3333330000000000UL, 0x000000006E333333UL, 0xC3C3C30000000000UL, 0x00000000183C66C3UL, 0xC3C3C30000000000UL, 0x0000000066FFDBDBUL,
+                0x3C66C30000000000UL, 0x00000000C3663C18UL, 0x6363630000000000UL, 0x001F30607E636363UL, 0x18337F0000000000UL, 0x000000007F63060CUL, 0x180E181818700000UL, 0x0000000070181818UL,
+                0x1800181818180000UL, 0x0000000018181818UL, 0x18701818180E0000UL, 0x000000000E181818UL, 0x000000003B6E0000UL, 0x0000000000000000UL, 0x63361C0800000000UL, 0x00000000007F6363UL,
+            };
+
+            memset(font.tex.pixels, 0, font.tex.w * font.tex.h * sizeof(*font.tex.pixels));
+            for (i32 glyphIndex = 0; glyphIndex < font.glyphCount; glyphIndex++) {
+                u8* glyphBitmap = (u8*)(_uiFont + (glyphIndex * 2));
+                for (i32 glyphByteIndex = 0; glyphByteIndex < 16; glyphByteIndex++) {
+                    u8 glyphByte = glyphBitmap[glyphByteIndex];
+                    for (u8 bitIndex = 0; bitIndex < 8; bitIndex++) {
+                        u8 mask = 1 << bitIndex;
+                        if (glyphByte & mask) {
+                            i32 texIndex = glyphByteIndex * font.tex.w + glyphIndex * font.glyphW + glyphIndex * font.gapW + bitIndex;
+                            font.tex.pixels[texIndex] = 0xFFFF'FFFF;
+                        }
+                    }
+                }
+            }
+        }
+
         struct { Texture* ptr; i32 len; } textures = {.len = AtlasID_Count};
         textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.len);
+        textures.ptr[AtlasID_font] = font.tex;
         {
             WIN32_FIND_DATAA findData = {};
             HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
@@ -823,7 +957,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             .AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
             .AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
         };
-        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.sampler);
+        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.rects.sprite.sampler);
+    }
+
+    {
+        D3D11_SAMPLER_DESC desc = {
+            .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT, // TODO(khvorov) What kind of blend should we have here?
+            .AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
+        };
+        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.rects.screen.sampler);
     }
 
     {
@@ -864,12 +1008,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         GetClientRect(window.hwnd, &rect);
         DWORD windowWidth = rect.right - rect.left;
         f32 windowHalfWidth = (f32)windowWidth / 2.0f;
-        f32 SrcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
+        f32 srcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .color = {.r = 1, .g = 1, .b = 1, .a = 1}, .posIsWorld = true}));
-        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {SrcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando],  .color = {.r = 1, .g = 1, .b = 1, .a = 1}, .mirrorX = true, .posIsWorld = true}));
+        // TODO(khvorov) Fix jittering edges of textures
+        // TODO(khvorov) Custom blend seems to result in some edges (including internal) to flicker in and out sometimes
 
-        arrpush(d3d11.rects.storage, ((RectInstance) {.pos = {10, 20}, .dimOrOffset = {2.51, 10}, .texInAtlas = atlasLocations.ptr[AtlasID_whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}, .posIsWorld = false}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {srcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .color = {.r = 1, .g = 1, .b = 1, .a = 1}, .mirrorX = true,}));
+
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {20, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_font].dim, .texInAtlas = atlasLocations.ptr[AtlasID_font], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
 
     for (;;) {
@@ -902,14 +1053,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             GetKeyboardState(keyboard);
             u8 downMask = (1 << 7);
 
-            f32 deltaX = 0.1f;
+            f32 deltaX = 0.001f;
+            SpriteRect* sprite = d3d11.rects.sprite.storage.ptr;
             if (keyboard[VK_LEFT] & downMask) {
-                d3d11.rects.storage.ptr[0].mirrorX = true;
-                d3d11.rects.storage.ptr[0].pos.x -= deltaX;
+                // sprite->mirrorX = true;
+                sprite->pos.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
-                d3d11.rects.storage.ptr[0].mirrorX = false;
-                d3d11.rects.storage.ptr[0].pos.x += deltaX;
+                sprite->mirrorX = false;
+                sprite->pos.x += deltaX;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
@@ -969,11 +1121,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         d3d11.cbuffer.storage.cameraHeightOverWidth = (f32)window.h / (f32)window.w;
 
         if (d3d11.rtView) {
+
+            // TODO(khvorov) Compress?
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-                memcpy(mapped.pData, d3d11.rects.storage.ptr, d3d11.rects.storage.len * sizeof(*d3d11.rects.storage.ptr));
-                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.buf, 0);
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                memcpy(mapped.pData, d3d11.rects.sprite.storage.ptr, d3d11.rects.sprite.storage.len * sizeof(*d3d11.rects.sprite.storage.ptr));
+                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);
+            }
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.screen.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                memcpy(mapped.pData, d3d11.rects.screen.storage.ptr, d3d11.rects.screen.storage.len * sizeof(*d3d11.rects.screen.storage.ptr));
+                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.screen.buf, 0);
             }
 
             {
@@ -995,30 +1155,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             FLOAT color[] = {0.01, 0.02, 0.03, 0};
             ID3D11DeviceContext_ClearRenderTargetView(d3d11.context, d3d11.rtView, color);
 
-            ID3D11DeviceContext_IASetInputLayout(d3d11.context, d3d11.layout);
-            ID3D11DeviceContext_IASetPrimitiveTopology(d3d11.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            {
-                UINT stride = sizeof(RectInstance);
-                UINT offset = 0;
-                ID3D11DeviceContext_IASetVertexBuffers(d3d11.context, 0, 1, &d3d11.rects.buf, &stride, &offset);
-            }
-
-            d3d11.context->lpVtbl->VSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
-            d3d11.context->lpVtbl->PSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
-
-            ID3D11DeviceContext_VSSetShader(d3d11.context, d3d11.vshader, NULL, 0);
-
-            ID3D11DeviceContext_RSSetViewports(d3d11.context, 1, &viewport);
-            ID3D11DeviceContext_RSSetState(d3d11.context, d3d11.rasterizerState);
-
-            ID3D11DeviceContext_PSSetSamplers(d3d11.context, 0, 1, &d3d11.sampler);
-            ID3D11DeviceContext_PSSetShaderResources(d3d11.context, 0, 1, &d3d11.textureView);
-            ID3D11DeviceContext_PSSetShader(d3d11.context, d3d11.pshader, NULL, 0);
-
-            ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
-            ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
-
-            ID3D11DeviceContext_DrawInstanced(d3d11.context, 4, d3d11.rects.storage.len, 0, 0);
+            // TODO(khvorov) Better function interface
+            d3d11DrawRects(
+                d3d11.context, d3d11.rects.sprite.vsps, sizeof(SpriteRect), d3d11.rects.sprite.buf, d3d11.cbuffer.buf,
+                &viewport, d3d11.rasterizerState, d3d11.rects.sprite.sampler, d3d11.textureView, d3d11.blendState, d3d11.rtView,
+                d3d11.rects.sprite.storage.len
+            );
+            d3d11DrawRects(
+                d3d11.context, d3d11.rects.screen.vsps, sizeof(ScreenRect), d3d11.rects.screen.buf, d3d11.cbuffer.buf,
+                &viewport, d3d11.rasterizerState, d3d11.rects.screen.sampler, d3d11.textureView, d3d11.blendState, d3d11.rtView,
+                d3d11.rects.screen.storage.len
+            );
         }
 
         {
@@ -1038,13 +1185,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     d3d11.device->lpVtbl->Release(d3d11.device);
     d3d11.context->lpVtbl->Release(d3d11.context);
     d3d11.swapChain->lpVtbl->Release(d3d11.swapChain);
-    d3d11.rects.buf->lpVtbl->Release(d3d11.rects.buf);
+    d3d11.rects.screen.buf->lpVtbl->Release(d3d11.rects.screen.buf);
+    d3d11.rects.sprite.buf->lpVtbl->Release(d3d11.rects.sprite.buf);
     d3d11.cbuffer.buf->lpVtbl->Release(d3d11.cbuffer.buf);
-    d3d11.layout->lpVtbl->Release(d3d11.layout);
-    d3d11.vshader->lpVtbl->Release(d3d11.vshader);
-    d3d11.pshader->lpVtbl->Release(d3d11.pshader);
+    d3d11DestroyVSPS(d3d11.rects.sprite.vsps);
+    d3d11DestroyVSPS(d3d11.rects.screen.vsps);
     d3d11.textureView->lpVtbl->Release(d3d11.textureView);
-    d3d11.sampler->lpVtbl->Release(d3d11.sampler);
+    d3d11.rects.sprite.sampler->lpVtbl->Release(d3d11.rects.sprite.sampler);
+    d3d11.rects.screen.sampler->lpVtbl->Release(d3d11.rects.screen.sampler);
     d3d11.blendState->lpVtbl->Release(d3d11.blendState);
     d3d11.rasterizerState->lpVtbl->Release(d3d11.rasterizerState);
     if (d3d11.rtView) d3d11.rtView->lpVtbl->Release(d3d11.rtView);

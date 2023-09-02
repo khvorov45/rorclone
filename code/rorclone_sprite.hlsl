@@ -1,12 +1,11 @@
 struct VS_INPUT {
     uint index : SV_VertexID;
     float2 pos : POS;
-    float2 dimOrOffset : DIM_OR_OFFSET;
+    float2 offset : OFFSET;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
     float4 color : COLOR;
     int mirrorX : MIRRORX;
-    int posIsWorld : POS_IS_WORLD;
 };
 
 struct PS_INPUT {
@@ -31,31 +30,16 @@ sampler sampler0 : register(s0);
 Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT vs(VS_INPUT input) {
+    float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
 
-    float2 posInClip;
-    float2 dimInClip;
-    if (input.posIsWorld) {
-        float2 inputOffset = input.dimOrOffset;
-        float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
+    float2 offsetForCenter = input.texInAtlasDim / 2 - input.offset;
+    offsetForCenter.y *= -1;
+    if (input.mirrorX) offsetForCenter.x *= -1;
 
-        float2 offsetForCenter = input.texInAtlasDim / 2 - inputOffset;
-        offsetForCenter.y *= -1;
-        if (input.mirrorX) offsetForCenter.x *= -1;
-
-        float2 offsetPos = input.pos + offsetForCenter;
-        float2 posInCamera = offsetPos - cameraPos;
-        posInClip = posInCamera / cameraHalfSpan;
-        dimInClip = input.texInAtlasDim / cameraHalfSpan;
-    } else {
-        float2 inputDim = input.dimOrOffset;
-
-        float2 offsetForCenter = inputDim / 2;
-        float2 offsetPos = input.pos + offsetForCenter;
-        posInClip = offsetPos / windowDim * 2 - 1;
-        posInClip.y *= -1;
-
-        dimInClip = inputDim / windowDim * 2;
-    }
+    float2 offsetPos = input.pos + offsetForCenter;
+    float2 posInCamera = offsetPos - cameraPos;
+    float2 posInClip = posInCamera / cameraHalfSpan;
+    float2 dimInClip = input.texInAtlasDim / cameraHalfSpan;
 
     float2 scaleInClip = dimInClip * 0.5;
     float2 posInUV = input.texInAtlasTopleft / atlasDim;
