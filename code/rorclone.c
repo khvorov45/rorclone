@@ -465,7 +465,7 @@ static void d3d11DestroyVS(D3D11VS vs) {
     D3D11Destroy(vs.vshader);
 }
 
-static void d3d11DrawRects(ID3D11DeviceContext* context, ID3D11Buffer* instanceBuffer, D3D11VS vs, UINT rectSize, i64 rectCount) {
+static void d3d11DrawRects(ID3D11DeviceContext* context, ID3D11SamplerState* sampler, ID3D11Buffer* instanceBuffer, D3D11VS vs, UINT rectSize, i64 rectCount) {
     ID3D11DeviceContext_IASetInputLayout(context, vs.layout);
     {
         UINT stride = rectSize;
@@ -473,6 +473,7 @@ static void d3d11DrawRects(ID3D11DeviceContext* context, ID3D11Buffer* instanceB
         ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &instanceBuffer, &stride, &offset);
     }
     ID3D11DeviceContext_VSSetShader(context, vs.vshader, NULL, 0);
+    ID3D11DeviceContext_PSSetSamplers(context, 0, 1, &sampler);
     ID3D11DeviceContext_DrawInstanced(context, 4, rectCount, 0, 0);
 }
 
@@ -581,10 +582,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11BlendState* blendState;
         ID3D11RasterizerState* rasterizer;
         ID3D11RenderTargetView* rtView;
-        ID3D11SamplerState* sampler;
         ID3D11PixelShader* pshader;
         struct {
-            #define D3D11Rects(Type) struct {D3D11VS vs; ID3D11Buffer* buf; struct {Type* ptr; i64 len; i64 cap;} storage; }
+            #define D3D11Rects(Type) struct { ID3D11SamplerState* sampler; D3D11VS vs; ID3D11Buffer* buf; struct {Type* ptr; i64 len; i64 cap;} storage; }
             D3D11Rects(SpriteRect) sprite;
             D3D11Rects(ScreenRect) screen;
             #undef D3D11Rects
@@ -935,7 +935,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             .AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
             .AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
         };
-        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.sampler);
+        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.rects.sprite.sampler);
+    }
+
+    {
+        D3D11_SAMPLER_DESC desc = {
+            .Filter = D3D11_FILTER_MIN_MAG_MIP_POINT,
+            .AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+            .AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
+        };
+        ID3D11Device_CreateSamplerState(d3d11.device, &desc, &d3d11.rects.screen.sampler);
     }
 
     {
@@ -1107,7 +1117,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_ClearRenderTargetView(d3d11.context, d3d11.rtView, color);
 
             ID3D11DeviceContext_IASetPrimitiveTopology(d3d11.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            ID3D11DeviceContext_PSSetSamplers(d3d11.context, 0, 1, &d3d11.sampler);
             ID3D11DeviceContext_PSSetShaderResources(d3d11.context, 0, 1, &d3d11.textureView);
             ID3D11DeviceContext_PSSetShader(d3d11.context, d3d11.pshader, NULL, 0);
 
@@ -1120,7 +1129,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
 
-            #define D3D11DrawRects(Rects) d3d11DrawRects(d3d11.context, Rects.buf, Rects.vs, sizeof(*Rects.storage.ptr), Rects.storage.len)
+            #define D3D11DrawRects(Rects) d3d11DrawRects(d3d11.context, Rects.sampler, Rects.buf, Rects.vs, sizeof(*Rects.storage.ptr), Rects.storage.len)
             D3D11DrawRects(d3d11.rects.sprite);
             D3D11DrawRects(d3d11.rects.screen);
             #undef D3D11DrawRects
@@ -1149,9 +1158,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     D3D11Destroy(d3d11.rasterizer);
     D3D11Destroy(d3d11.rtView);
     D3D11Destroy(d3d11.pshader);
-    D3D11Destroy(d3d11.sampler);
 
-    #define D3D11DestroyRects(Rects) D3D11Destroy(Rects.buf); d3d11DestroyVS(Rects.vs)
+    #define D3D11DestroyRects(Rects) D3D11Destroy(Rects.buf); d3d11DestroyVS(Rects.vs); D3D11Destroy(Rects.sampler)
     D3D11DestroyRects(d3d11.rects.sprite);
     D3D11DestroyRects(d3d11.rects.screen);
     #undef D3D11DestroyRects
