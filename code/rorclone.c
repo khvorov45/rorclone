@@ -465,6 +465,13 @@ static void d3d11DestroyVS(D3D11VS vs) {
     D3D11Destroy(vs.vshader);
 }
 
+static void d3d11CopyBuf(ID3D11DeviceContext* context, ID3D11Buffer* dest, void* src, i64 size) {
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    context->lpVtbl->Map(context, (ID3D11Resource*)dest, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    memcpy(mapped.pData, src, size);
+    context->lpVtbl->Unmap(context, (ID3D11Resource*)dest, 0);
+}
+
 static void d3d11DrawRects(ID3D11DeviceContext* context, ID3D11SamplerState* sampler, ID3D11Buffer* instanceBuffer, D3D11VS vs, UINT rectSize, i64 rectCount) {
     ID3D11DeviceContext_IASetInputLayout(context, vs.layout);
     {
@@ -671,7 +678,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     D3D11CreateRectStorage(d3d11.rects.sprite)
     D3D11CreateRectStorage(d3d11.rects.screen)
     #undef D3D11CreateRectStorage
-    
+
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
@@ -785,6 +792,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 u8arr fileContent = readEntireFile(path, memory.scratch);
 
                 // TODO(khvorov) Get sprite offsets from the source art probably
+                // TODO(khvorov) Mips
 
                 AseFile* ase = (AseFile*)fileContent.ptr;
                 assert(ase->magic == 0xA5E0);
@@ -978,19 +986,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    // TODO(khvorov) This would have to be a scale factor?
+    // TODO(khvorov) Change to scale factor and only allow exact scaling for the sprites
     d3d11.cbuffer.storage.cameraHalfSpanX = 100;
 
-    // TODO(khvorov) Better way to move by screen pixels
     {
-        RECT rect = {};
-        GetClientRect(window.hwnd, &rect);
-        DWORD windowWidth = rect.right - rect.left;
-        f32 windowHalfWidth = (f32)windowWidth / 2.0f;
-        f32 srcPxPerScreenPx = d3d11.cbuffer.storage.cameraHalfSpanX / windowHalfWidth;
-
         arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {srcPxPerScreenPx, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .mirrorX = true,}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .mirrorX = true,}));
 
         arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {20, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian]}));
 
@@ -1029,10 +1030,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             GetKeyboardState(keyboard);
             u8 downMask = (1 << 7);
 
-            f32 deltaX = 0.001f;
+            f32 deltaX = 0.01f;
             SpriteRect* sprite = d3d11.rects.sprite.storage.ptr;
             if (keyboard[VK_LEFT] & downMask) {
-                // sprite->mirrorX = true;
+                sprite->mirrorX = true;
                 sprite->pos.x -= deltaX;
             }
             if (keyboard[VK_RIGHT] & downMask) {
@@ -1083,26 +1084,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         if (d3d11.rtView) {
 
-            // TODO(khvorov) Compress?
-            {
-                D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-                memcpy(mapped.pData, d3d11.rects.sprite.storage.ptr, d3d11.rects.sprite.storage.len * sizeof(*d3d11.rects.sprite.storage.ptr));
-                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);
-            }
-            {
-                D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.screen.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-                memcpy(mapped.pData, d3d11.rects.screen.storage.ptr, d3d11.rects.screen.storage.len * sizeof(*d3d11.rects.screen.storage.ptr));
-                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.screen.buf, 0);
-            }
+            #define D3D11CopyRects(Rects) d3d11CopyBuf(d3d11.context, Rects.buf, Rects.storage.ptr, Rects.storage.len * sizeof(*Rects.storage.ptr))
+            D3D11CopyRects(d3d11.rects.sprite);
+            D3D11CopyRects(d3d11.rects.screen);
+            #undef D3D11CopyRects
 
-            {
-                D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-                memcpy(mapped.pData, &d3d11.cbuffer.storage, sizeof(d3d11.cbuffer.storage));
-                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.cbuffer.buf, 0);
-            }
+            d3d11CopyBuf(d3d11.context, d3d11.cbuffer.buf, &d3d11.cbuffer.storage, sizeof(d3d11.cbuffer.storage));
 
             D3D11_VIEWPORT viewport = {
                 .TopLeftX = 0,
