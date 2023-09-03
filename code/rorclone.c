@@ -701,13 +701,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         u8arr shaderps = readEntireFile(STR("data/rorclone.hlsl_ps.bin"), memory.scratch);
         HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(d3d11.device, shaderps.ptr, shaderps.len, NULL, &d3d11.pshader);
         assertHR(ID3D11Device_CreatePixelShaderResult);
-    }                
+    }
 
     struct {Rect* ptr; i64 len;} atlasLocations = {};
     tempMemoryBlock(memory.scratch) {
 
-        // TODO(khvorov) 2px pad
-        struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 1};
+        struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
         font.tex.w = font.glyphW * font.glyphCount + (font.glyphCount - 1) * font.gapW;
         font.tex.h = font.glyphH;
         font.tex.pixels = arenaAllocArray(memory.scratch, u32, font.tex.w * font.tex.h);
@@ -864,14 +863,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             trimmed->h = bottom - top + 1;
         }
 
-        // TODO(khvorov) 2px pad
         stbrp_rect* rectsToPack = arenaAllocArray(memory.scratch, stbrp_rect, textures.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             Texture* texture = texturesTrimmed + texInd;
             stbrp_rect* rect = rectsToPack + texInd;
             rect->id = texInd;
-            rect->w = texture->w + 1;
-            rect->h = texture->h + 1;
+            rect->w = texture->w + 2;
+            rect->h = texture->h + 2;
         }
 
         {
@@ -890,8 +888,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             atlas.w = max(atlas.w, rect->x + rect->w);
             atlas.h = max(atlas.h, rect->y + rect->h);
         }
-        atlas.w += 1;
-        atlas.h += 1;
         atlas.pixels = arenaAllocArray(memory.scratch, u32, atlas.w * atlas.h);
 
         atlasLocations.len = textures.len;
@@ -907,7 +903,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 memcpy(dest, src, trimmed->w * sizeof(u32));
             }
 
-            Rect atlasLocation = {{rect->x + 1, rect->y + 1}, {rect->w - 1, rect->h - 1}};
+            Rect atlasLocation = {{rect->x, rect->y}, {rect->w, rect->h}};
             atlasLocations.ptr[texInd] = atlasLocation;
         }
 
