@@ -663,18 +663,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         IDXGIDevice_Release(dxgiDevice);
     }
 
-    // TODO(khvorov) Compress?
-    {
-        d3d11.rects.sprite.storage.cap = 1024;
-        d3d11.rects.sprite.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.sprite.storage.ptr) * d3d11.rects.sprite.storage.cap, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.sprite.storage.ptr = arenaAllocArray(memory.perm, SpriteRect, d3d11.rects.sprite.storage.cap);
-    }
-    {
-        d3d11.rects.screen.storage.cap = 1024;
-        d3d11.rects.screen.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(*d3d11.rects.screen.storage.ptr) * d3d11.rects.screen.storage.cap, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.screen.storage.ptr = arenaAllocArray(memory.perm, ScreenRect, d3d11.rects.screen.storage.cap);
-    }
-
+    #define D3D11CreateRectStorage(Rects) { \
+        Rects.storage.cap = 1024; \
+        i64 size = sizeof(*Rects.storage.ptr) * Rects.storage.cap; \
+        Rects.buf = d3d11CreateDynBuffer(d3d11.device, size, D3D11_BIND_VERTEX_BUFFER); \
+        Rects.storage.ptr = arenaAlloc(memory.perm, size); }
+    D3D11CreateRectStorage(d3d11.rects.sprite)
+    D3D11CreateRectStorage(d3d11.rects.screen)
+    #undef D3D11CreateRectStorage
+    
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
