@@ -26,8 +26,7 @@ cbuffer cbuffer0 : register(b0) {
     float2 windowDim;
     float2 atlasDim;
     float2 cameraPos;
-    float cameraHalfSpanX;
-    float cameraHeightOverWidth;
+    float spriteScaleMultiplier;
 }
 
 sampler sampler0 : register(s0);
@@ -60,16 +59,17 @@ PS_INPUT vs_screen(VS_INPUT_SCREEN input) {
 }
 
 PS_INPUT vs_sprite(VS_INPUT_SPRITE input) {
-    float2 cameraHalfSpan = float2(cameraHalfSpanX, cameraHalfSpanX * cameraHeightOverWidth);
+    float2 cameraHalfSpan = windowDim / spriteScaleMultiplier / 2;
 
-    float2 offsetForCenter = input.texInAtlasDim / 2 - input.offset;
+    float2 wudim = input.texInAtlasDim / spriteScaleMultiplier;
+    float2 offsetForCenter = wudim / 2 - input.offset;
     offsetForCenter.y *= -1;
     if (input.mirrorX) offsetForCenter.x *= -1;
 
     float2 offsetPos = input.pos + offsetForCenter;
     float2 posInCamera = offsetPos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
-    float2 dimInClip = input.texInAtlasDim / cameraHalfSpan;
+    float2 dimInClip = input.texInAtlasDim / windowDim * 2;
 
     float2 scaleInClip = dimInClip * 0.5;
     float2 posInUV = input.texInAtlasTopleft / atlasDim;

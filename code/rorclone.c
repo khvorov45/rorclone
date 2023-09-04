@@ -274,6 +274,35 @@ typedef struct AseFile {
 #pragma pack(pop)
 
 //
+// SECTION Input
+//
+
+typedef enum InputKeyID {
+    InputKeyID_None,
+
+    InputKeyID_Left,
+    InputKeyID_Right,
+    InputKeyID_ToggleScaling,
+
+    InputKeyID_Count,
+} InputKeyID;
+
+typedef struct InputKey {
+    bool down;
+    i32 halfTransitionCount;
+} InputKey;
+
+typedef struct Input {
+    InputKey keys[InputKeyID_Count];
+} Input;
+
+static bool wasPressed(Input* input, InputKeyID id) {
+    InputKey* key = input->keys + id;
+    bool result = (key->halfTransitionCount > 1) || (key->down && key->halfTransitionCount > 0);
+    return result;
+}
+
+//
 // SECTION Misc
 //
 
@@ -297,12 +326,20 @@ typedef struct Texture {
 } Texture;
 
 // TODO(khvorov) Auto generate?
+#define MIP_COUNT 4
 typedef enum AtlasID {
     AtlasID_whitepx,
     AtlasID_font,
 
-    AtlasID_commando,
-    AtlasID_lemurian,
+    AtlasID_commando_1,
+    AtlasID_commando_2,
+    AtlasID_commando_3,
+    AtlasID_commando_4,
+
+    AtlasID_lemurian_1,
+    AtlasID_lemurian_2,
+    AtlasID_lemurian_3,
+    AtlasID_lemurian_4,
 
     AtlasID_Count,
 } AtlasID;
@@ -313,8 +350,9 @@ typedef enum AtlasID {
 
 typedef struct SpriteRect {
     V2 pos, offset;
-    Rect texInAtlas;
     int mirrorX;
+    Rect texInAtlas;
+    AtlasID id;
 } SpriteRect;
 
 typedef struct ScreenRect {
@@ -325,10 +363,10 @@ typedef struct ScreenRect {
 
 typedef struct CBuffer {
     V2 windowDim;
-    V2 texDim;
+    V2 atlasDim;
     V2 cameraPos;
-    f32 cameraHalfSpanX;
-    f32 cameraHeightOverWidth;
+    f32 spriteScaleMultiplier;
+    u8 pad[4];
 } CBuffer;
 
 // NOTE(khvorov) D3D11 initialisation code is based on this
@@ -770,8 +808,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
 
+        u32 whitePxTexData[] = {0xffff'ffff};
+        Texture whitePxTex = {.w = 1, .h = 1, .pixels = whitePxTexData};
+
         struct { Texture* ptr; i32 len; } textures = {.len = AtlasID_Count};
         textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.len);
+        textures.ptr[AtlasID_whitepx] = whitePxTex;
         textures.ptr[AtlasID_font] = font.tex;
         {
             WIN32_FIND_DATAA findData = {};
@@ -783,16 +825,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 // TODO(khvorov) Autogen?
                 AtlasID thisID = 0;
-                if      (streq(nameStr, STR("whitepx.aseprite")))  {thisID = AtlasID_whitepx;}
-                else if (streq(nameStr, STR("commando.aseprite"))) {thisID = AtlasID_commando;}
-                else if (streq(nameStr, STR("lemurian.aseprite"))) {thisID = AtlasID_lemurian;}
+                if      (streq(nameStr, STR("commando.aseprite"))) {thisID = AtlasID_commando_1;}
+                else if (streq(nameStr, STR("lemurian.aseprite"))) {thisID = AtlasID_lemurian_1;}
                 else {assert(!"unrecognized file");}
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
                 u8arr fileContent = readEntireFile(path, memory.scratch);
 
                 // TODO(khvorov) Get sprite offsets from the source art probably
-                // TODO(khvorov) Mips
 
                 AseFile* ase = (AseFile*)fileContent.ptr;
                 assert(ase->magic == 0xA5E0);
@@ -827,6 +867,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                                 int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
                                 assert(decodeResult == bytesInTex);
                                 textures.ptr[thisID] = texture;
+
+                                i32 scaleFactor = 2;
+                                for (i32 mipIndex = 1; mipIndex < MIP_COUNT; mipIndex++) {
+                                    Texture miptex = {.w = texture.w * scaleFactor, .h = texture.h * scaleFactor};
+                                    miptex.pixels = arenaAllocArray(memory.scratch, u32, miptex.w * miptex.h);
+                                    for (i32 ogrow = 0; ogrow < texture.h; ogrow++) {
+                                        for (i32 ogcol = 0; ogcol < texture.w; ogcol++) {
+
+                                            i32 ogindex = ogrow * texture.w + ogcol;
+                                            u32 ogpx = texture.pixels[ogindex];
+
+                                            for (i32 repRow = 0; repRow < scaleFactor; repRow++) {
+                                                for (i32 repCol = 0; repCol < scaleFactor; repCol++) {
+                                                    i32 miptexRow = ogrow * scaleFactor + repRow;
+                                                    i32 miptexCol = ogcol * scaleFactor + repCol;
+                                                    i32 miptexIndex = miptexRow * miptex.w + miptexCol;
+                                                    miptex.pixels[miptexIndex] = ogpx;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    textures.ptr[thisID + mipIndex] = miptex;
+                                    scaleFactor *= 2;
+                                }
                             } break;
 
                             case AseChunkType_Palette:
@@ -933,7 +998,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateShaderResourceView(d3d11.device, (ID3D11Resource*)texture, NULL, &d3d11.textureView);
         ID3D11Texture2D_Release(texture);
 
-        d3d11.cbuffer.storage.texDim = (V2) {atlas.w, atlas.h};
+        d3d11.cbuffer.storage.atlasDim = (V2) {atlas.w, atlas.h};
     }
 
     {
@@ -986,30 +1051,45 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    // TODO(khvorov) Change to scale factor and only allow exact scaling for the sprites
-    d3d11.cbuffer.storage.cameraHalfSpanX = 100;
+    d3d11.cbuffer.storage.spriteScaleMultiplier = 2.0f;
 
     {
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando]}));
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando], .mirrorX = true,}));
-
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {20, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian]}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando_2], .id = AtlasID_commando_2}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando_2], .id = AtlasID_commando_2, .mirrorX = true}));
+        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {20, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian_2], .id = AtlasID_lemurian_2}));
 
         arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-
         arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_font].dim, .texInAtlas = atlasLocations.ptr[AtlasID_font], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
+
+    // TODO(khvorov) Killfocus message
+    Input input = {};
 
     for (;;) {
         assert(memory.scratch->used == 0);
         assert(memory.scratch->tempCount == 0);
         assert(memory.perm->tempCount == 0);
 
+        for (i32 keyid = 0; keyid < InputKeyID_Count; keyid++) {
+            input.keys[keyid].halfTransitionCount = 0;
+        }
+
         for (MSG msg = {}; PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE);) {
             switch (msg.message) {
-                case WM_MOUSEMOVE:
                 case WM_KEYDOWN:
-                case WM_KEYUP:
+                case WM_KEYUP: {
+                    InputKeyID key = InputKeyID_None;
+                    switch (msg.wParam) {
+                        case VK_LEFT:  key = InputKeyID_Left;          break;
+                        case VK_RIGHT: key = InputKeyID_Right;         break;
+                        case VK_UP:    key = InputKeyID_ToggleScaling; break;
+                    }
+                    bool down = msg.message == WM_KEYDOWN;
+                    input.keys[key].down = down;
+                    input.keys[key].halfTransitionCount += 1;
+                } break;
+
+                case WM_MOUSEMOVE:
                 case WM_SYSKEYUP:
                     break;
 
@@ -1026,19 +1106,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         }
 
         {
-            u8 keyboard[256];
-            GetKeyboardState(keyboard);
-            u8 downMask = (1 << 7);
-
             f32 deltaX = 0.01f;
             SpriteRect* sprite = d3d11.rects.sprite.storage.ptr;
-            if (keyboard[VK_LEFT] & downMask) {
+            if (input.keys[InputKeyID_Left].down) {
                 sprite->mirrorX = true;
                 sprite->pos.x -= deltaX;
             }
-            if (keyboard[VK_RIGHT] & downMask) {
+            if (input.keys[InputKeyID_Right].down) {
                 sprite->mirrorX = false;
                 sprite->pos.x += deltaX;
+            }
+
+            if (wasPressed(&input, InputKeyID_ToggleScaling)) {
+                i32 currentMipIndex = __builtin_ctz(~((i32)d3d11.cbuffer.storage.spriteScaleMultiplier - 1));
+                i32 nextMipIndex = (currentMipIndex + 1) % MIP_COUNT;
+                i32 mipDelta = nextMipIndex - currentMipIndex;
+                d3d11.cbuffer.storage.spriteScaleMultiplier = 1;
+                for (i32 powIndex = 0; powIndex < nextMipIndex; powIndex++) {
+                    d3d11.cbuffer.storage.spriteScaleMultiplier *= 2;
+                }
+
+                for (i32 ind = 0; ind < d3d11.rects.sprite.storage.len; ind++) {
+                    SpriteRect* rect = d3d11.rects.sprite.storage.ptr + ind;
+                    rect->id += mipDelta;
+                    rect->texInAtlas = atlasLocations.ptr[rect->id];
+                }
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
@@ -1080,7 +1172,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         }
 
         d3d11.cbuffer.storage.windowDim = (V2) {window.w, window.h};
-        d3d11.cbuffer.storage.cameraHeightOverWidth = (f32)window.h / (f32)window.w;
 
         if (d3d11.rtView) {
 
