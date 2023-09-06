@@ -326,34 +326,66 @@ typedef struct Texture {
 } Texture;
 
 // TODO(khvorov) Auto generate?
-#define MIP_COUNT 4
+
+typedef enum EntityID {
+    EntityID_None = 0,
+    EntityID_Commando = 2,
+    EntityID_Lemurian = 6,
+} EntityID;
+
+typedef enum CommandoAnimationID {
+    CommandoAnimationID_Idle,
+    CommandoAnimationID_Walk,
+} CommandoAnimationID;
+
+typedef enum LemurianAnimationID {
+    LemurianAnimationID_Idle,
+} LemurianAnimationID;
+
+typedef enum MipID {
+    MipID_1,
+    MipID_2,
+
+    MipID_Count,
+} MipID;
+
 typedef enum AtlasID {
-    AtlasID_whitepx,
-    AtlasID_font,
+    AtlasID_Whitepx = 0,
+    AtlasID_Font = 1,
 
-    AtlasID_commando_1,
-    AtlasID_commando_2,
-    AtlasID_commando_3,
-    AtlasID_commando_4,
+    AtlasID_Commando_Mip1 = 2,
+    AtlasID_Commando_Mip2 = 3,
 
-    AtlasID_lemurian_1,
-    AtlasID_lemurian_2,
-    AtlasID_lemurian_3,
-    AtlasID_lemurian_4,
+    AtlasID_Commando_Walk_Mip1 = 4,
+    AtlasID_Commando_Walk_Mip2 = 5,
 
-    AtlasID_Count,
+    AtlasID_Lemurian_Mip1 = 6,
+    AtlasID_Lemurian_Mip2 = 7,
+
+    AtlasID_Count = 8,
 } AtlasID;
+
+typedef struct SpriteCommon {
+    V2 pos, offset;
+    int mirrorX;
+} SpriteCommon;
+
+typedef struct Sprite {
+    SpriteCommon common;
+    EntityID entity;
+    int animationID;
+    f32 animationProgress01; // TODO(khvorov) Implement
+    MipID mip;
+} Sprite;
+
+typedef struct SpriteRect {
+    SpriteCommon common;
+    Rect texInAtlas;
+} SpriteRect;
 
 //
 // SECTION Platform
 //
-
-typedef struct SpriteRect {
-    V2 pos, offset;
-    int mirrorX;
-    Rect texInAtlas;
-    AtlasID id;
-} SpriteRect;
 
 typedef struct ScreenRect {
     V2 pos, dim;
@@ -582,6 +614,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     if (false) benchAlignment(memory.scratch);
 
+    struct {Sprite* ptr; i64 len; i64 cap; MipID mip;} sprites = {.cap = 1024};
+    sprites.ptr = arenaAllocArray(memory.perm, Sprite, sprites.cap);
+
     struct {
         HWND hwnd;
         DWORD w, h;
@@ -629,10 +664,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11RenderTargetView* rtView;
         ID3D11PixelShader* pshader;
         struct {
-            #define D3D11Rects(Type) struct { ID3D11SamplerState* sampler; D3D11VS vs; ID3D11Buffer* buf; struct {Type* ptr; i64 len; i64 cap;} storage; }
-            D3D11Rects(SpriteRect) sprite;
-            D3D11Rects(ScreenRect) screen;
-            #undef D3D11Rects
+            // TODO(khvorov) Compress?
+            struct { ID3D11SamplerState* sampler; D3D11VS vs; ID3D11Buffer* buf; } sprite;
+            struct { ID3D11SamplerState* sampler; D3D11VS vs; ID3D11Buffer* buf; struct {ScreenRect* ptr; i64 len; i64 cap;} storage; } screen;
         } rects;
     } d3d11 = {};
 
@@ -708,22 +742,22 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         IDXGIDevice_Release(dxgiDevice);
     }
 
-    #define D3D11CreateRectStorage(Rects) { \
-        Rects.storage.cap = 1024; \
-        i64 size = sizeof(*Rects.storage.ptr) * Rects.storage.cap; \
-        Rects.buf = d3d11CreateDynBuffer(d3d11.device, size, D3D11_BIND_VERTEX_BUFFER); \
-        Rects.storage.ptr = arenaAlloc(memory.perm, size); }
-    D3D11CreateRectStorage(d3d11.rects.sprite)
-    D3D11CreateRectStorage(d3d11.rects.screen)
-    #undef D3D11CreateRectStorage
+    d3d11.rects.sprite.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(SpriteRect) * sprites.cap, D3D11_BIND_VERTEX_BUFFER);
+
+    {
+        d3d11.rects.screen.storage.cap = sprites.cap;
+        i64 size = sizeof(*d3d11.rects.screen.storage.ptr) * d3d11.rects.screen.storage.cap;
+        d3d11.rects.screen.buf = d3d11CreateDynBuffer(d3d11.device, size, D3D11_BIND_VERTEX_BUFFER);
+        d3d11.rects.screen.storage.ptr = arenaAlloc(memory.perm, size);
+    }
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(SpriteRect, mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(SpriteRect, common.mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
         d3d11.rects.sprite.vs = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("sprite"));
     }
@@ -813,8 +847,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         struct { Texture* ptr; i32 len; } textures = {.len = AtlasID_Count};
         textures.ptr = arenaAllocArray(memory.scratch, Texture, textures.len);
-        textures.ptr[AtlasID_whitepx] = whitePxTex;
-        textures.ptr[AtlasID_font] = font.tex;
+        textures.ptr[AtlasID_Whitepx] = whitePxTex;
+        textures.ptr[AtlasID_Font] = font.tex;
         {
             WIN32_FIND_DATAA findData = {};
             HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
@@ -825,8 +859,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 // TODO(khvorov) Autogen?
                 AtlasID thisID = 0;
-                if      (streq(nameStr, STR("commando.aseprite"))) {thisID = AtlasID_commando_1;}
-                else if (streq(nameStr, STR("lemurian.aseprite"))) {thisID = AtlasID_lemurian_1;}
+                if      (streq(nameStr, STR("commando.aseprite")))      {thisID = AtlasID_Commando_Mip1;}
+                else if (streq(nameStr, STR("commando_walk.aseprite"))) {thisID = AtlasID_Commando_Walk_Mip1;}
+                else if (streq(nameStr, STR("lemurian.aseprite")))      {thisID = AtlasID_Lemurian_Mip1;}
                 else {assert(!"unrecognized file");}
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
@@ -869,7 +904,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                                 textures.ptr[thisID] = texture;
 
                                 i32 scaleFactor = 2;
-                                for (i32 mipIndex = 1; mipIndex < MIP_COUNT; mipIndex++) {
+                                for (i32 mipIndex = 1; mipIndex < MipID_Count; mipIndex++) {
                                     Texture miptex = {.w = texture.w * scaleFactor, .h = texture.h * scaleFactor};
                                     miptex.pixels = arenaAllocArray(memory.scratch, u32, miptex.w * miptex.h);
                                     for (i32 ogrow = 0; ogrow < texture.h; ogrow++) {
@@ -1051,15 +1086,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
-    d3d11.cbuffer.storage.spriteScaleMultiplier = 2.0f;
-
     {
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, 0}, .texInAtlas = atlasLocations.ptr[AtlasID_commando_2], .id = AtlasID_commando_2}));
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {0, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_commando_2], .id = AtlasID_commando_2, .mirrorX = true}));
-        arrpush(d3d11.rects.sprite.storage, ((SpriteRect) {.pos = {20, -20}, .texInAtlas = atlasLocations.ptr[AtlasID_lemurian_2], .id = AtlasID_lemurian_2}));
+        arrpush(sprites, ((Sprite) {.common.pos = {0, 0}, .entity = EntityID_Commando}));
+        arrpush(sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        arrpush(sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
 
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_font].dim, .texInAtlas = atlasLocations.ptr[AtlasID_font], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_Whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_Font].dim, .texInAtlas = atlasLocations.ptr[AtlasID_Font], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
 
     // TODO(khvorov) Killfocus message
@@ -1107,33 +1140,30 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         {
             f32 deltaX = 0.01f;
-            SpriteRect* sprite = d3d11.rects.sprite.storage.ptr;
+            Sprite* sprite = sprites.ptr;
+            assert(sprite->entity == EntityID_Commando);
+            sprite->animationID = CommandoAnimationID_Idle;
             if (input.keys[InputKeyID_Left].down) {
-                sprite->mirrorX = true;
-                sprite->pos.x -= deltaX;
+                sprite->common.mirrorX = true;
+                sprite->common.pos.x -= deltaX;
+                sprite->animationID = CommandoAnimationID_Walk;
             }
             if (input.keys[InputKeyID_Right].down) {
-                sprite->mirrorX = false;
-                sprite->pos.x += deltaX;
+                sprite->common.mirrorX = false;
+                sprite->common.pos.x += deltaX;
+                sprite->animationID = CommandoAnimationID_Walk;
             }
 
             if (wasPressed(&input, InputKeyID_ToggleScaling)) {
-                i32 currentMipIndex = __builtin_ctz(~((i32)d3d11.cbuffer.storage.spriteScaleMultiplier - 1));
-                i32 nextMipIndex = (currentMipIndex + 1) % MIP_COUNT;
-                i32 mipDelta = nextMipIndex - currentMipIndex;
-                d3d11.cbuffer.storage.spriteScaleMultiplier = 1;
-                for (i32 powIndex = 0; powIndex < nextMipIndex; powIndex++) {
-                    d3d11.cbuffer.storage.spriteScaleMultiplier *= 2;
-                }
-
-                for (i32 ind = 0; ind < d3d11.rects.sprite.storage.len; ind++) {
-                    SpriteRect* rect = d3d11.rects.sprite.storage.ptr + ind;
-                    rect->id += mipDelta;
-                    rect->texInAtlas = atlasLocations.ptr[rect->id];
-                }
+                sprites.mip = (sprites.mip + 1) % MipID_Count;
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
+            {
+                d3d11.cbuffer.storage.spriteScaleMultiplier = 1.0f;
+                i32 left = sprites.mip;
+                while (left--) d3d11.cbuffer.storage.spriteScaleMultiplier *= 2.0f;
+            }
         }
 
         {
@@ -1175,11 +1205,24 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         if (d3d11.rtView) {
 
-            #define D3D11CopyRects(Rects) d3d11CopyBuf(d3d11.context, Rects.buf, Rects.storage.ptr, Rects.storage.len * sizeof(*Rects.storage.ptr))
-            D3D11CopyRects(d3d11.rects.sprite);
-            D3D11CopyRects(d3d11.rects.screen);
-            #undef D3D11CopyRects
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                SpriteRect* spriteRects = mapped.pData;
+                for (i64 spriteIndex = 0; spriteIndex < sprites.len; spriteIndex++) {
+                    Sprite* sprite = sprites.ptr + spriteIndex;
+                    SpriteRect* spriteRect = spriteRects + spriteIndex;
+                    spriteRect->common = sprite->common;
 
+                    AtlasID id = (AtlasID)sprite->entity;
+                    id += MipID_Count * sprite->animationID;
+                    id += sprites.mip;
+                    spriteRect->texInAtlas = atlasLocations.ptr[id];
+                }
+                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);                    
+            }
+
+            d3d11CopyBuf(d3d11.context, d3d11.rects.screen.buf, d3d11.rects.screen.storage.ptr, d3d11.rects.screen.storage.len * sizeof(*d3d11.rects.screen.storage.ptr));
             d3d11CopyBuf(d3d11.context, d3d11.cbuffer.buf, &d3d11.cbuffer.storage, sizeof(d3d11.cbuffer.storage));
 
             D3D11_VIEWPORT viewport = {
@@ -1207,10 +1250,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_OMSetBlendState(d3d11.context, d3d11.blendState, NULL, ~0U);
             ID3D11DeviceContext_OMSetRenderTargets(d3d11.context, 1, &d3d11.rtView, 0);
 
-            #define D3D11DrawRects(Rects) d3d11DrawRects(d3d11.context, Rects.sampler, Rects.buf, Rects.vs, sizeof(*Rects.storage.ptr), Rects.storage.len)
-            D3D11DrawRects(d3d11.rects.sprite);
-            D3D11DrawRects(d3d11.rects.screen);
-            #undef D3D11DrawRects
+            d3d11DrawRects(d3d11.context, d3d11.rects.sprite.sampler, d3d11.rects.sprite.buf, d3d11.rects.sprite.vs, sizeof(SpriteRect), sprites.len);
+            d3d11DrawRects(d3d11.context, d3d11.rects.screen.sampler, d3d11.rects.screen.buf, d3d11.rects.screen.vs, sizeof(*d3d11.rects.screen.storage.ptr), d3d11.rects.screen.storage.len);
         }
 
         {
