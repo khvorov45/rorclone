@@ -317,6 +317,8 @@ typedef union V4 {
     struct {f32 r, g, b, a;};
 } V4;
 
+static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
+
 typedef struct Rect {
     V2 topleft;
     V2 dim;
@@ -358,8 +360,13 @@ typedef enum AtlasID {
     AtlasID_Count = 6,
 } AtlasID;
 
+typedef struct AtlasLocation {
+    Rect rect;
+    V2 offset; // NOTE(khvorov) First frame in every animation has offset (0, 0)
+} AtlasLocation;
+
 typedef struct SpriteCommon {
-    V2 pos, offset;
+    V2 pos;
     int mirrorX;
 } SpriteCommon;
 
@@ -372,7 +379,7 @@ typedef struct Sprite {
 
 typedef struct SpriteRect {
     SpriteCommon common;
-    Rect texInAtlas;
+    AtlasLocation texInAtlas;
 } SpriteRect;
 
 //
@@ -751,10 +758,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(SpriteRect, common.mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
         d3d11.rects.sprite.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("sprite"));
     }
@@ -770,7 +777,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         d3d11.rects.screen.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("screen"));
     }
 
-    struct {Rect* ptr; i64 len;} atlasLocations = {};
+    struct {AtlasLocation* ptr; i64 len;} atlasLocations = {.len = AtlasID_Count};
+    atlasLocations.ptr = arenaAllocArray(memory.perm, AtlasLocation, atlasLocations.len);
     tempMemoryBlock(memory.scratch) {
 
         struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
@@ -858,12 +866,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 Str path = strfmt(memory.scratch, "data/%s", name);
                 u8arr fileContent = readEntireFile(memory.scratch, path);
 
-                // TODO(khvorov) Get sprite offsets from the source art
                 // TODO(khvorov) Get animation frame durations
 
                 AseFile* ase = (AseFile*)fileContent.ptr;
                 assert(ase->magic == 0xA5E0);
                 AseFrame* frame = ase->frames;
+                V2 firstFrameArtOffset = {};
                 for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
                     assert(frame->magic == 0xF1FA);
                     thisID += frameIndex;
@@ -892,6 +900,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                                 int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
                                 assert(decodeResult == bytesInTex);
                                 textures.ptr[thisID] = texture;
+
+                                V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
+                                if (frameIndex == 0) {
+                                    firstFrameArtOffset = artOffset;
+                                } else {
+                                    AtlasLocation* thisLoc = atlasLocations.ptr + thisID;
+                                    V2 thisOffset = v2sub(firstFrameArtOffset, artOffset);
+                                    thisLoc->offset = thisOffset;
+                                }
                             } break;
 
                             case AseChunkType_Palette:
@@ -935,8 +952,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         }
         atlas.pixels = arenaAllocArray(memory.scratch, u32, atlas.w * atlas.h);
 
-        atlasLocations.len = textures.len;
-        atlasLocations.ptr = arenaAllocArray(memory.perm, Rect, atlasLocations.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
             Texture* texture = textures.ptr + rect->id;
@@ -947,8 +962,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 memcpy(dest, src, texture->w * sizeof(u32));
             }
 
-            Rect atlasLocation = {{rect->x, rect->y}, {rect->w, rect->h}};
-            atlasLocations.ptr[texInd] = atlasLocation;
+            AtlasLocation* loc = atlasLocations.ptr + texInd;
+            loc->rect = (Rect) {{rect->x, rect->y}, {rect->w, rect->h}};
         }
 
         D3D11_TEXTURE2D_DESC desc = {
@@ -1020,8 +1035,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         arrpush(sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
         arrpush(sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
 
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_Whitepx], .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_Font].dim, .texInAtlas = atlasLocations.ptr[AtlasID_Font], .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_Font].rect.dim, .texInAtlas = atlasLocations.ptr[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
 
     // TODO(khvorov) Killfocus message

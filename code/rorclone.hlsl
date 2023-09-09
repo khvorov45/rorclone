@@ -1,10 +1,10 @@
 struct VS_INPUT_SPRITE {
     uint index : SV_VertexID;
     float2 pos : POS;
-    float2 offset : OFFSET;
+    int mirrorX : MIRRORX;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
-    int mirrorX : MIRRORX;
+    float2 offset : OFFSET;
 };
 
 struct VS_INPUT_SCREEN {
