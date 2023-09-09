@@ -397,7 +397,7 @@ typedef struct Sprite {
     EntityID entity;
     AnimationID animationID;
     i32 animationFrame;
-    i32 currentAnimationCounterFrames; // TODO(khvorov) Change to time
+    i32 currentAnimationCounterMS;
 } Sprite;
 
 typedef struct SpriteRect {
@@ -406,7 +406,7 @@ typedef struct SpriteRect {
 } SpriteRect;
 
 typedef struct Animation {
-    i32* frameDurationInFrames; // TODO(khvorov) Change to time
+    f32* frameDurationInMS;
     i32 frameCount;
 } Animation;
 
@@ -902,14 +902,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 Animation* animation = animations + thisAnimationID;
                 animation->frameCount = ase->frameCount;
-                animation->frameDurationInFrames = arenaAllocArray(memory.perm, i32, ase->frameCount);
+                animation->frameDurationInMS = arenaAllocArray(memory.perm, f32, ase->frameCount);
 
                 AseFrame* frame = ase->frames;
                 V2 firstFrameArtOffset = {};
 
                 for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
                     assert(frame->magic == 0xF1FA);
-                    animation->frameDurationInFrames[frameIndex] = frame->frameDurationMS; // TODO(khvorov) Fix this up when we switch to time 
+                    animation->frameDurationInMS[frameIndex] = frame->frameDurationMS;
 
                     AseChunk* chunk = frame->chunks;
                     AtlasID thisID = getAtlasID(thisEntityID, thisAnimationID, frameIndex);
@@ -1079,6 +1079,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     // TODO(khvorov) Killfocus message
     Input input = {};
 
+    LARGE_INTEGER performanceFrequencyPerSecond = {};
+    QueryPerformanceFrequency(&performanceFrequencyPerSecond);
+
+    LARGE_INTEGER performanceCounter;
+    QueryPerformanceCounter(&performanceCounter);
+
     for (;;) {
         assert(memory.scratch->used == 0);
         assert(memory.scratch->tempCount == 0);
@@ -1120,8 +1126,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
 
+        f32 msSinceLastUpdate = 0;
         {
-            f32 deltaX = 0.1f;
+            u64 before = performanceCounter.QuadPart;
+            QueryPerformanceCounter(&performanceCounter);
+            u64 diff = performanceCounter.QuadPart - before;
+            msSinceLastUpdate = (f32)diff / (f32)performanceFrequencyPerSecond.QuadPart * 1000.0f;
+        }
+
+        {
+            f32 deltaX = 0.01f * msSinceLastUpdate;
             Sprite* sprite = sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
             sprite->animationID = AnimationID_Commando_Idle;
@@ -1144,9 +1158,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             {
                 Animation* animation = animations + sprite->animationID;
-                if (sprite->animationID == AnimationID_Commando_Walk && sprite->currentAnimationCounterFrames++ == animation->frameDurationInFrames[sprite->animationFrame]) {
+                if (sprite->currentAnimationCounterMS >= animation->frameDurationInMS[sprite->animationFrame]) {
                     sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
-                    sprite->currentAnimationCounterFrames = 0;
+                    sprite->currentAnimationCounterMS = 0;
+                } else {
+                    sprite->currentAnimationCounterMS += msSinceLastUpdate;
                 }
             }
 
