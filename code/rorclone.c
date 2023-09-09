@@ -908,34 +908,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             } while (FindNextFileA(findHandle, &findData));
         }
 
-        Texture* texturesTrimmed = arenaAllocArray(memory.scratch, Texture, textures.len);
-        for (i32 texInd = 0; texInd < textures.len; texInd++) {
-            Texture* texture = textures.ptr + texInd;
-            i32 left = texture->w;
-            i32 right = 0;
-            i32 top = texture->h;
-            i32 bottom = 0;
-            for (i32 row = 0; row < texture->h; row++) {
-                for (i32 col = 0; col < texture->w; col++) {
-                    u32 px = texture->pixels[row * texture->w + col];
-                    if (px) {
-                        left = min(left, col);
-                        right = max(right, col);
-                        top = min(top, row);
-                        bottom = max(bottom, row);
-                    }
-                }
-            }
-
-            Texture* trimmed = texturesTrimmed + texInd;
-            trimmed->pixels = texture->pixels + top * texture->w + left;
-            trimmed->w = right - left + 1;
-            trimmed->h = bottom - top + 1;
-        }
-
         stbrp_rect* rectsToPack = arenaAllocArray(memory.scratch, stbrp_rect, textures.len);
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
-            Texture* texture = texturesTrimmed + texInd;
+            Texture* texture = textures.ptr + texInd;
             stbrp_rect* rect = rectsToPack + texInd;
             rect->id = texInd;
             rect->w = texture->w + 2;
@@ -965,12 +940,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         for (i32 texInd = 0; texInd < textures.len; texInd++) {
             stbrp_rect* rect = rectsToPack + texInd;
             Texture* texture = textures.ptr + rect->id;
-            Texture* trimmed = texturesTrimmed + rect->id;
 
-            for (i32 texRow = 0; texRow < trimmed->h; texRow++) {
-                u32* src = trimmed->pixels + texRow * texture->w;
+            for (i32 texRow = 0; texRow < texture->h; texRow++) {
+                u32* src = texture->pixels + texRow * texture->w;
                 u32* dest = atlas.pixels + (texRow + (rect->y + 1)) * atlas.w + (rect->x + 1);
-                memcpy(dest, src, trimmed->w * sizeof(u32));
+                memcpy(dest, src, texture->w * sizeof(u32));
             }
 
             Rect atlasLocation = {{rect->x, rect->y}, {rect->w, rect->h}};
