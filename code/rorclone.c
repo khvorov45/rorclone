@@ -406,7 +406,7 @@ typedef struct SpriteRect {
 } SpriteRect;
 
 typedef struct Animation {
-    i32 frameDurationInFrames; // TODO(khvorov) Change to time
+    i32* frameDurationInFrames; // TODO(khvorov) Change to time
     i32 frameCount;
 } Animation;
 
@@ -902,13 +902,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 Animation* animation = animations + thisAnimationID;
                 animation->frameCount = ase->frameCount;
-                animation->frameDurationInFrames = 10; // TODO(khvorov) Get animation frame durations
+                animation->frameDurationInFrames = arenaAllocArray(memory.perm, i32, ase->frameCount);
 
                 AseFrame* frame = ase->frames;
                 V2 firstFrameArtOffset = {};
 
                 for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
                     assert(frame->magic == 0xF1FA);
+                    animation->frameDurationInFrames[frameIndex] = frame->frameDurationMS; // TODO(khvorov) Fix this up when we switch to time 
+
                     AseChunk* chunk = frame->chunks;
                     AtlasID thisID = getAtlasID(thisEntityID, thisAnimationID, frameIndex);
                     for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
@@ -1142,7 +1144,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             {
                 Animation* animation = animations + sprite->animationID;
-                if (sprite->animationID == AnimationID_Commando_Walk && sprite->currentAnimationCounterFrames++ == animation->frameDurationInFrames) {
+                if (sprite->animationID == AnimationID_Commando_Walk && sprite->currentAnimationCounterFrames++ == animation->frameDurationInFrames[sprite->animationFrame]) {
                     sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
                     sprite->currentAnimationCounterFrames = 0;
                 }
