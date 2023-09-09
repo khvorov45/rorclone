@@ -225,6 +225,7 @@ typedef struct AseChunkCel {
     u8 future[5];
     u16 width;
     u16 height;
+    u8 compressed[];
 } AseChunkCel;
 
 typedef struct AseChunk {
@@ -882,16 +883,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             case AseChunkType_Cel: {
                                 Texture texture = {};
                                 assert(chunk->cel.type == AseCelType_CompressedImage);
-                                u32 nonDataSize = sizeof(u32) + sizeof(AseChunkType) + sizeof(AseChunkCel);
-                                assert(chunk->size >= nonDataSize);
-                                void* compressedData = (void*)chunk + nonDataSize;
-                                u32 compressedDataSize = chunk->size - nonDataSize;
+                                u32 compressedDataSize = chunk->size - offsetof(AseChunk, cel.compressed);
                                 texture.w = chunk->cel.width;
                                 texture.h = chunk->cel.height;
                                 i32 pixelsInTex = texture.w * texture.h;
                                 texture.pixels = arenaAllocArray(memory.scratch, u32, pixelsInTex);
                                 i32 bytesInTex = pixelsInTex * sizeof(u32);
-                                int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, compressedData, compressedDataSize);
+                                int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
                                 assert(decodeResult == bytesInTex);
                                 textures.ptr[thisID] = texture;
                             } break;
