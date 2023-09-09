@@ -332,33 +332,55 @@ typedef struct Texture {
 // TODO(khvorov) Auto generate?
 
 typedef enum EntityID {
-    EntityID_None = 0,
-    EntityID_Commando = 2,
-    EntityID_Lemurian = 5,
+    EntityID_None,
+
+    EntityID_Commando,
+    EntityID_Lemurian,
+
+    EntityID_Count,
 } EntityID;
 
-typedef enum CommandoAnimationID {
-    CommandoAnimationID_Idle = 0,
-    CommandoAnimationID_Walk = 1,
-} CommandoAnimationID;
+typedef enum AnimationID {
+    AnimationID_Commando_Idle,
+    AnimationID_Commando_Walk,
 
-typedef enum LemurianAnimationID {
-    LemurianAnimationID_Idle = 0,
-} LemurianAnimationID;
+    AnimationID_Lemurian_Idle,
+
+    AnimationID_Count,
+} AnimationID;
 
 typedef enum AtlasID {
-    AtlasID_Whitepx = 0,
-    AtlasID_Font = 1,
+    AtlasID_Whitepx,
+    AtlasID_Font,
 
-    AtlasID_Commando_frame1 = 2,
+    AtlasID_Commando_frame1,
 
-    AtlasID_Commando_Walk_frame1 = 3,
-    AtlasID_Commando_Walk_frame2 = 4,
+    AtlasID_Commando_Walk_frame1,
+    AtlasID_Commando_Walk_frame2,
 
-    AtlasID_Lemurian_frame1 = 5,
+    AtlasID_Lemurian_frame1,
 
-    AtlasID_Count = 6,
+    AtlasID_Count,
 } AtlasID;
+
+static const i32 globalFirstAtlasID[EntityID_Count] = {
+    [EntityID_Commando] = AtlasID_Commando_frame1,
+    [EntityID_Lemurian] = AtlasID_Lemurian_frame1,
+};
+
+static const i32 globalAnimationCumulativeFrameCounts[AnimationID_Count] = {
+    [AnimationID_Commando_Idle] = 0,
+    [AnimationID_Commando_Walk] = 1,
+
+    [AnimationID_Lemurian_Idle] = 0,
+};
+
+static AtlasID getAtlasID(EntityID entity, AnimationID animation, i32 animationFrame) {
+    i32 firstAtlasID = globalFirstAtlasID[entity];
+    i32 animationOffset = globalAnimationCumulativeFrameCounts[animation];
+    AtlasID id = (AtlasID)(firstAtlasID + animationOffset + animationFrame);
+    return id;
+}
 
 typedef struct AtlasLocation {
     Rect rect;
@@ -367,20 +389,26 @@ typedef struct AtlasLocation {
 
 typedef struct SpriteCommon {
     V2 pos;
-    int mirrorX;
+    i32 mirrorX;
 } SpriteCommon;
 
 typedef struct Sprite {
     SpriteCommon common;
     EntityID entity;
-    int animationID;
-    int animationFrame;
+    AnimationID animationID;
+    i32 animationFrame;
+    i32 currentAnimationCounterFrames; // TODO(khvorov) Change to time
 } Sprite;
 
 typedef struct SpriteRect {
     SpriteCommon common;
     AtlasLocation texInAtlas;
 } SpriteRect;
+
+typedef struct Animation {
+    i32 frameDurationInFrames; // TODO(khvorov) Change to time
+    i32 frameCount;
+} Animation;
 
 //
 // SECTION Platform
@@ -621,6 +649,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     struct {Sprite* ptr; i64 len; i64 cap;} sprites = {.cap = 1024};
     sprites.ptr = arenaAllocArray(memory.perm, Sprite, sprites.cap);
 
+    Animation* animations = arenaAllocArray(memory.perm, Animation, AnimationID_Count);
+
     struct {
         HWND hwnd;
         DWORD w, h;
@@ -857,25 +887,30 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 Str nameStr = {name, strlen(name)};
 
                 // TODO(khvorov) Autogen?
-                AtlasID thisID = 0;
-                if      (streq(nameStr, STR("commando.aseprite")))      {thisID = AtlasID_Commando_frame1;}
-                else if (streq(nameStr, STR("commando_walk.aseprite"))) {thisID = AtlasID_Commando_Walk_frame1;}
-                else if (streq(nameStr, STR("lemurian.aseprite")))      {thisID = AtlasID_Lemurian_frame1;}
+                EntityID thisEntityID = 0;
+                AnimationID thisAnimationID = 0;
+                if      (streq(nameStr, STR("commando.aseprite")))      {thisEntityID = EntityID_Commando; thisAnimationID = AnimationID_Commando_Idle;}
+                else if (streq(nameStr, STR("commando_walk.aseprite"))) {thisEntityID = EntityID_Commando; thisAnimationID = AnimationID_Commando_Walk;}
+                else if (streq(nameStr, STR("lemurian.aseprite")))      {thisEntityID = EntityID_Lemurian; thisAnimationID = AnimationID_Lemurian_Idle;}
                 else {assert(!"unrecognized file");}
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
                 u8arr fileContent = readEntireFile(memory.scratch, path);
 
-                // TODO(khvorov) Get animation frame durations
-
-                AseFile* ase = (AseFile*)fileContent.ptr;
+                AseFile* ase = (AseFile*)fileContent.ptr;                
                 assert(ase->magic == 0xA5E0);
+
+                Animation* animation = animations + thisAnimationID;
+                animation->frameCount = ase->frameCount;
+                animation->frameDurationInFrames = 10; // TODO(khvorov) Get animation frame durations
+
                 AseFrame* frame = ase->frames;
                 V2 firstFrameArtOffset = {};
+
                 for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
                     assert(frame->magic == 0xF1FA);
-                    thisID += frameIndex;
                     AseChunk* chunk = frame->chunks;
+                    AtlasID thisID = getAtlasID(thisEntityID, thisAnimationID, frameIndex);
                     for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
                         assert(chunk->size >= 6);
 
@@ -1087,16 +1122,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             f32 deltaX = 0.1f;
             Sprite* sprite = sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
-            sprite->animationID = CommandoAnimationID_Idle;
+            sprite->animationID = AnimationID_Commando_Idle;
             if (input.keys[InputKeyID_Left].down) {
                 sprite->common.mirrorX = true;
                 sprite->common.pos.x -= deltaX;
-                sprite->animationID = CommandoAnimationID_Walk;
+                sprite->animationID = AnimationID_Commando_Walk;
             }
             if (input.keys[InputKeyID_Right].down) {
                 sprite->common.mirrorX = false;
                 sprite->common.pos.x += deltaX;
-                sprite->animationID = CommandoAnimationID_Walk;
+                sprite->animationID = AnimationID_Commando_Walk;
             }
             if (input.keys[InputKeyID_Up].down) {
                 sprite->common.pos.y += deltaX;
@@ -1105,11 +1140,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 sprite->common.pos.y -= deltaX;
             }
 
-            // TODO(khvorov) Actual animation update
-            static int counter = 0;
-            if (sprite->animationID == CommandoAnimationID_Walk && counter++ == 10) {
-                sprite->animationFrame = (sprite->animationFrame + 1) % 2;
-                counter = 0;
+            {
+                Animation* animation = animations + sprite->animationID;
+                if (sprite->animationID == AnimationID_Commando_Walk && sprite->currentAnimationCounterFrames++ == animation->frameDurationInFrames) {
+                    sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
+                    sprite->currentAnimationCounterFrames = 0;
+                }
             }
 
             d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
@@ -1164,7 +1200,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     SpriteRect* spriteRect = spriteRects + spriteIndex;
                     spriteRect->common = sprite->common;
 
-                    AtlasID id = (AtlasID)((i32)sprite->entity + (i32)sprite->animationID + sprite->animationFrame);
+                    AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
                     spriteRect->texInAtlas = atlasLocations.ptr[id];
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);
