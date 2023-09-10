@@ -329,51 +329,7 @@ typedef struct Texture {
     i32 w, h;
 } Texture;
 
-// TODO(khvorov) Auto generate?
-
-typedef enum EntityID {
-    EntityID_None,
-
-    EntityID_Commando,
-    EntityID_Lemurian,
-
-    EntityID_Count,
-} EntityID;
-
-typedef enum AnimationID {
-    AnimationID_Commando_Idle,
-    AnimationID_Commando_Walk,
-
-    AnimationID_Lemurian_Idle,
-
-    AnimationID_Count,
-} AnimationID;
-
-typedef enum AtlasID {
-    AtlasID_Whitepx,
-    AtlasID_Font,
-
-    AtlasID_Commando_frame1,
-
-    AtlasID_Commando_Walk_frame1,
-    AtlasID_Commando_Walk_frame2,
-
-    AtlasID_Lemurian_frame1,
-
-    AtlasID_Count,
-} AtlasID;
-
-static const i32 globalFirstAtlasID[EntityID_Count] = {
-    [EntityID_Commando] = AtlasID_Commando_frame1,
-    [EntityID_Lemurian] = AtlasID_Lemurian_frame1,
-};
-
-static const i32 globalAnimationCumulativeFrameCounts[AnimationID_Count] = {
-    [AnimationID_Commando_Idle] = 0,
-    [AnimationID_Commando_Walk] = 1,
-
-    [AnimationID_Lemurian_Idle] = 0,
-};
+#include "generated.c"
 
 static AtlasID getAtlasID(EntityID entity, AnimationID animation, i32 animationFrame) {
     i32 firstAtlasID = globalFirstAtlasID[entity];
@@ -445,69 +401,22 @@ typedef struct CBuffer {
 
 #define D3D11Destroy(x) x->lpVtbl->Release(x)
 
-void benchAlignment(Arena* arena) {
-    // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
-
-    i64 misalignments[] = {0, 1};
-    for (u64 misalignmentIndex = 0; misalignmentIndex < arrayCount(misalignments); misalignmentIndex++) tempMemoryBlock(arena) {
-        // NOTE(khvorov) Assume aligned
-        assert(((u64)arenaFreeptr(arena) & 3) == 0);
-
-        i64 thisMisalign = misalignments[misalignmentIndex];
-        arena->used += thisMisalign;
-
-        i64 floatsToAlloc[] = {100, 1000, 10000, 100000};
-        for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)arrayCount(floatsToAlloc); floatsToAllocIndex++) {
-            i64 floatCount = floatsToAlloc[floatsToAllocIndex];
-            u64 minDiff = UINT64_MAX;
-            u64 maxDiff = 0;
-
-            i64 timesToRun = 10000;
-            f32 sumOfSums = 0;
-
-            for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) tempMemoryBlock(arena) {
-                u64 before = __rdtsc();
-
-                f32* arr = arenaAllocArray(arena, f32, floatCount);
-                for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                    arr[floatIndex] = (f32)floatIndex;
-                }
-                f32 sum = 0;
-                for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                    sum += arr[floatIndex];
-                }
-
-                sumOfSums += sum;
-
-                u64 after = __rdtsc();
-                u64 diff = after - before;
-
-                minDiff = min(minDiff, diff);
-                maxDiff = max(maxDiff, diff);
-            }
-
-            {
-                Str out = strfmt(arena, "mis: %llu floatCount: %llu, sum: %f, min: %llu, max: %llu\n", thisMisalign, floatCount, sumOfSums, minDiff, maxDiff);
-                OutputDebugStringA(out.ptr);
-            }
-        }
-    }
-}
-
 static u8arr readEntireFile(Arena* arena, Str path) {
-    Str path0 = {};
-    tempMemoryBlock(arena) {path0 = strfmt(arena, "%.*s", LIT(path));}
+    HANDLE hfile = 0;
+    tempMemoryBlock(arena) {
+        Str path0 = strfmt(arena, "%.*s", LIT(path));
 
-    HANDLE hfile = CreateFileA(
-        path0.ptr,
-        GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        0,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        0
-    );
-    assert(hfile != INVALID_HANDLE_VALUE);
+        hfile = CreateFileA(
+            path0.ptr,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0
+        );
+        assert(hfile != INVALID_HANDLE_VALUE);
+    }
 
     LARGE_INTEGER fileSize = {};
     BOOL GetFileSizeExResult = GetFileSizeEx(hfile, &fileSize);
@@ -643,8 +552,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         memory.scratch->base = ptr + memory.perm->size;
         memory.scratch->size = size - memory.perm->size;
     }
-
-    if (false) benchAlignment(memory.scratch);
 
     struct {Sprite* ptr; i64 len; i64 cap;} sprites = {.cap = 1024};
     sprites.ptr = arenaAllocArray(memory.perm, Sprite, sprites.cap);
@@ -886,12 +793,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 char* name = findData.cFileName;
                 Str nameStr = {name, strlen(name)};
 
-                // TODO(khvorov) Autogen?
                 EntityID thisEntityID = 0;
                 AnimationID thisAnimationID = 0;
-                if      (streq(nameStr, STR("commando.aseprite")))      {thisEntityID = EntityID_Commando; thisAnimationID = AnimationID_Commando_Idle;}
+                if      (streq(nameStr, STR("commando_idle.aseprite")))      {thisEntityID = EntityID_Commando; thisAnimationID = AnimationID_Commando_Idle;}
                 else if (streq(nameStr, STR("commando_walk.aseprite"))) {thisEntityID = EntityID_Commando; thisAnimationID = AnimationID_Commando_Walk;}
-                else if (streq(nameStr, STR("lemurian.aseprite")))      {thisEntityID = EntityID_Lemurian; thisAnimationID = AnimationID_Lemurian_Idle;}
+                else if (streq(nameStr, STR("lemurian_idle.aseprite")))      {thisEntityID = EntityID_Lemurian; thisAnimationID = AnimationID_Lemurian_Idle;}
                 else {assert(!"unrecognized file");}
 
                 Str path = strfmt(memory.scratch, "data/%s", name);
