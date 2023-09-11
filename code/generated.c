@@ -36,3 +36,15 @@ static const int globalAnimationCumulativeFrameCounts[AnimationID_Count] = {
     [AnimationID_Lemurian_Idle] = 0,
 };
 
+typedef struct AssetData {
+    struct {
+        int w;
+        int h;
+        unsigned int pixels[23940];
+        AtlasLocation locations[6];
+    } atlas;
+    struct {
+        float durations[4];
+        FirstLast delimiters[3];
+    } animations;
+} AssetData;
