@@ -43,6 +43,7 @@ typedef float    f32;
 typedef double   f64;
 
 typedef struct {u8* ptr; i64 len;} u8arr;
+typedef struct {f32* ptr; i64 len;} f32arr;
 
 //
 // SECTION Memory

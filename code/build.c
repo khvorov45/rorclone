@@ -312,6 +312,15 @@ static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
     );
 }
 
+#define assetAddArrOfArr(Arena, Datab, Name, DataType, Arr, Data) assetAddArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
+static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
+    assetBeginStruct(datab);
+    assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%*sarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
+    assetEndStruct(datab, name);
+    arrpush(datab->ptrfixes, ((PtrFix){name, arrElementCount}));
+}
+
 static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
     HANDLE hfile = 0;
     tempMemoryBlock(arena) {
@@ -483,7 +492,6 @@ int main() {
         }
 
         strbuilderEnumBegin(strbuilder, STR("EntityID"));
-        strbuilderEnumAdd(strbuilder, STR("None"));
         for (i64 ind = 0; ind < entityNamesDedup.len; ind++) {strbuilderEnumAdd(strbuilder, entityNamesDedup.ptr[ind]);}
         strbuilderEnumAdd(strbuilder, STR("Count"));
         strbuilderEnumEnd(strbuilder);
@@ -492,7 +500,6 @@ int main() {
     Str* animationNames = arenaAllocArray(arena, Str, fileInfos.len);
 
     strbuilderEnumBegin(strbuilder, STR("AnimationID"));
-    strbuilderEnumAdd(strbuilder, STR("None"));
     for (i64 ind = 0; ind < fileInfos.len; ind++) {
         FileInfo info = fileInfos.ptr[ind];
         Str animationName = strfmt(arena, "%.*s_%.*s", LIT(info.names.entity), LIT(info.names.animation));
@@ -627,7 +634,10 @@ int main() {
     }
 
     AtlasLocation* atlasLocations = arenaAllocAndZeroArray(arena, AtlasLocation, totalAtlasTextureCount);
-    Animation* animations = arenaAllocArray(arena, Animation, fileInfos.len);
+    struct {f32* ptr; i64 len, cap;} allAnimationDurations = {.cap = 4096};
+    allAnimationDurations.ptr = arenaAllocArray(arena, f32, allAnimationDurations.cap);
+    struct {Animation* ptr; i32 len;} animations = {.len = fileInfos.len};
+    animations.ptr = arenaAllocArray(arena, Animation, animations.len);
 
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfos.len; fileInfoIndex++) {
         FileInfo* info = fileInfos.ptr + fileInfoIndex;
@@ -636,13 +646,13 @@ int main() {
         AseFrame* frame = ase->frames;
         V2 firstFrameArtOffset = {};
 
-        Animation* animation = animations + fileInfoIndex;
+        Animation* animation = animations.ptr + fileInfoIndex;
         animation->frameCount = ase->frameCount;
-        animation->frameDurationsInMS = arenaAllocArray(arena, f32, ase->frameCount);
+        animation->frameDurationsInMS = (void*)allAnimationDurations.len;
 
         for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
             assert(frame->magic == 0xF1FA);
-            animation->frameDurationsInMS[frameIndex] = frame->frameDurationMS;
+            arrpush(allAnimationDurations, frame->frameDurationMS);
 
             AseChunk* chunk = frame->chunks;
             for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
@@ -695,22 +705,6 @@ int main() {
     }
 
     assert(atlasTextures.len == atlasTextures.cap);
-
-    struct {f32* ptr; i32 len, cap;} animationDurations = {.cap = 1024};
-    animationDurations.ptr = arenaAllocAndZeroArray(arena, f32, animationDurations.cap);
-    struct {FirstLast* ptr; i32 len, cap;} animationDelimiters = {.cap = animationDurations.cap};
-    animationDelimiters.ptr = arenaAllocAndZeroArray(arena, FirstLast, animationDelimiters.cap);
-    for (i32 animationIndex = 0; animationIndex < fileInfos.len; animationIndex++) {
-        Animation* animation = animations + animationIndex;
-        FirstLast fl = {.first = animationDurations.len};
-        assert(animation->frameCount > 0);
-        for (i32 frameIndex = 0; frameIndex < animation->frameCount; frameIndex++) {
-            f32 duration = animation->frameDurationsInMS[frameIndex];
-            arrpush(animationDurations, duration);
-        }
-        fl.last = animationDurations.len - 1;
-        arrpush(animationDelimiters, fl);
-    }
 
     Texture atlas = {};
     {
@@ -803,19 +797,8 @@ int main() {
     assetAddArrField(datab, "AtlasLocation locations", atlasLocations, totalAtlasTextureCount);
     assetEndStruct(datab, STR("atlas"));
 
-    assetBeginStruct(datab);
-    assetAddArrField(datab, "float durations", animationDurations.ptr, animationDurations.len);
-    assetAddArrField(datab, "FirstLast delimiters", animationDelimiters.ptr, animationDelimiters.len);
-    assetEndStruct(datab,  STR("animations"));
-
-    {
-        assetBeginStruct(datab);
-        assetAddArrField(datab, "u8 allData", allShaderData.ptr, allShaderData.len);
-        assetAddArrField(datab, "u8arr elements", shaders.ptr, shaders.len);
-        Str name = STR("shaders");
-        assetEndStruct(datab, name);
-        arrpush(datab->ptrfixes, ((PtrFix){name, shaders.len}));
-    }
+    assetAddArrOfArr(arena, datab, "animations", "f32", animations, allAnimationDurations);
+    assetAddArrOfArr(arena, datab, "shaders", "u8", shaders, allShaderData);
 
     assetEndData(datab);
 
@@ -826,7 +809,6 @@ int main() {
     }
     assetEndProc(datab);
 
-    // TODO(khvorov) Make animations in asset file be ptr/len
     // TODO(khvorov) Move everything in build.bat here
 
     writeEntireFile(arena, STR("data/data.bin"), binb.ptr, binb.len);

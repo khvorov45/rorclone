@@ -221,17 +221,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assetDataAfterLoad(assetData);
     }
 
-    Animation* animations = arenaAllocAndZeroArray(memory.perm, Animation, AnimationID_Count);
-    assert(arrayCount(assetData->animations.delimiters) == AnimationID_Count - 1);
-    for (u32 animationIndex = 0; animationIndex < arrayCount(assetData->animations.delimiters); animationIndex++) {
-        Animation* animation = animations + animationIndex + 1;
-        FirstLast delimiter = assetData->animations.delimiters[animationIndex];
-        animation->frameCount = delimiter.last - delimiter.first + 1;
-        animation->frameDurationsInMS = assetData->animations.durations + delimiter.first;
-    }
-
-    struct {AtlasLocation* ptr; i64 len;} atlasLocations = {.ptr = assetData->atlas.locations, .len = arrayCount(assetData->atlas.locations)};
-
     struct {Sprite* ptr; i64 len; i64 cap;} sprites = {.cap = 1024};
     sprites.ptr = arenaAllocArray(memory.perm, Sprite, sprites.cap);
 
@@ -467,8 +456,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         arrpush(sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
         arrpush(sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
 
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = atlasLocations.ptr[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = atlasLocations.ptr[AtlasID_Font].rect.dim, .texInAtlas = atlasLocations.ptr[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = assetData->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = assetData->atlas.locations[AtlasID_Font].rect.dim, .texInAtlas = assetData->atlas.locations[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
 
     // TODO(khvorov) Killfocus message
@@ -552,7 +541,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
 
             {
-                Animation* animation = animations + sprite->animationID;
+                Animation* animation = (Animation*)assetData->animations.elements + sprite->animationID;
                 if (sprite->currentAnimationCounterMS >= animation->frameDurationsInMS[sprite->animationFrame]) {
                     sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
                     sprite->currentAnimationCounterMS = 0;
@@ -614,7 +603,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     spriteRect->common = sprite->common;
 
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
-                    spriteRect->texInAtlas = atlasLocations.ptr[id];
+                    spriteRect->texInAtlas = assetData->atlas.locations[id];
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);
             }
