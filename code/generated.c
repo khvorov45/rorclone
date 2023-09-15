@@ -60,3 +60,7 @@ typedef struct AssetData {
         u8arr elements[4];
     } shaders;
 } AssetData;
+
+static void assetDataAfterLoad(AssetData* adata) {
+    for (u32 ind = 0; ind < 4; ind++) {adata->shaders.elements[ind].ptr = adata->shaders.allData + (u64)adata->shaders.elements[ind].ptr;}
+}

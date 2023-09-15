@@ -218,12 +218,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         u8arr data = readEntireFile(memory.perm, STR("data/data.bin"));
         assert(data.len == sizeof(AssetData));
         assetData = (AssetData*)data.ptr;
-    }
-
-    // TODO(khvorov) Autogen?
-    for (u32 shaderID = 0; shaderID < ShaderID_Count; shaderID++) {
-        u8arr* shader = assetData->shaders.elements + shaderID;
-        shader->ptr = assetData->shaders.allData + (u64)shader->ptr;
+        assetDataAfterLoad(assetData);
     }
 
     Animation* animations = arenaAllocAndZeroArray(memory.perm, Animation, AnimationID_Count);

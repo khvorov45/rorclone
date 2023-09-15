@@ -239,10 +239,16 @@ static void binWrite_(BinBuilder* bin, void* ptr, i64 len) {
     bin->len += len;
 }
 
+typedef struct PtrFix {
+    Str elementName;
+    i32 len;
+} PtrFix;
+
 typedef struct AssetDataBuilder {
     BinBuilder* bin;
     StrBuilder* str;
     i32 currentIndLevel;
+    struct {PtrFix* ptr; i32 len, cap;} ptrfixes;
 } AssetDataBuilder;
 
 static void assetIndent(AssetDataBuilder* datab) {
@@ -251,13 +257,13 @@ static void assetIndent(AssetDataBuilder* datab) {
     }
 }
 
-static void assetBegin(AssetDataBuilder* datab) {
+static void assetBeginData(AssetDataBuilder* datab) {
     strbuilderfmt(datab->str, "typedef struct AssetData {\n");
     datab->currentIndLevel += 1;
 }
 
-static void assetEnd(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "} AssetData;\n");
+static void assetEndData(AssetDataBuilder* datab) {
+    strbuilderfmt(datab->str, "} AssetData;\n\n");
     datab->currentIndLevel -= 1;
 }
 
@@ -285,6 +291,25 @@ static void assetAddArrField_(AssetDataBuilder* datab, Str name, void* data, i64
     assetIndent(datab);
     strbuilderfmt(datab->str, "%.*s[%d];\n", LIT(name), elementCount);
     binWrite_(datab->bin, data, elementCount * elementSize);
+}
+
+static void assetBeginProc(AssetDataBuilder* datab) {
+    strbuilderfmt(datab->str, "static void assetDataAfterLoad(AssetData* adata) {\n");
+    datab->currentIndLevel += 1;
+}
+
+static void assetEndProc(AssetDataBuilder* datab) {
+    strbuilderfmt(datab->str, "}\n");
+    datab->currentIndLevel -= 1;
+}
+
+static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
+    assetIndent(datab);
+    strbuilderfmt(datab->str,
+        "for (u32 ind = 0; ind < %d; ind++) {"
+        "adata->%.*s.elements[ind].ptr = adata->%.*s.allData + (u64)adata->%.*s.elements[ind].ptr;"
+        "}\n", count, LIT(name), LIT(name), LIT(name)
+    );
 }
 
 static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
@@ -531,13 +556,13 @@ int main() {
     struct {Texture* ptr; i64 len, cap;} atlasTextures = {.cap = totalAtlasTextureCount};
     atlasTextures.ptr = arenaAllocArray(arena, Texture, atlasTextures.cap);
 
-    {        
+    {
         u32 whitePxTexData[] = {0xffff'ffff};
         Texture whitePxTex = {.w = 1, .h = 1, .pixels = whitePxTexData};
         arrpush(atlasTextures, whitePxTex);
     }
 
-    {        
+    {
         struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
         font.tex.w = font.glyphW * font.glyphCount + (font.glyphCount - 1) * font.gapW;
         font.tex.h = font.glyphH;
@@ -607,10 +632,10 @@ int main() {
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfos.len; fileInfoIndex++) {
         FileInfo* info = fileInfos.ptr + fileInfoIndex;
         AseFile* ase = info->content;
-    
+
         AseFrame* frame = ase->frames;
         V2 firstFrameArtOffset = {};
-            
+
         Animation* animation = animations + fileInfoIndex;
         animation->frameCount = ase->frameCount;
         animation->frameDurationsInMS = arenaAllocArray(arena, f32, ase->frameCount);
@@ -642,7 +667,7 @@ int main() {
                         texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
                         i32 bytesInTex = pixelsInTex * sizeof(u32);
                         int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
-                        assert(decodeResult == bytesInTex);                        
+                        assert(decodeResult == bytesInTex);
 
                         V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
                         if (frameIndex == 0) {
@@ -688,7 +713,7 @@ int main() {
     }
 
     Texture atlas = {};
-    {        
+    {
         stbrp_rect* rectsToPack = arenaAllocArray(arena, stbrp_rect, atlasTextures.len);
         for (i32 texInd = 0; texInd < atlasTextures.len; texInd++) {
             Texture* texture = atlasTextures.ptr + texInd;
@@ -765,10 +790,11 @@ int main() {
     BinBuilder binb = {.cap = 50 * Megabyte};
     binb.ptr = arenaAllocArray(arena, u8, binb.cap);
 
-    AssetDataBuilder datab_ = {&binb, strbuilder, 0};
+    AssetDataBuilder datab_ = {.bin = &binb, .str = strbuilder, .ptrfixes.cap = 1024};
+    datab_.ptrfixes.ptr = arenaAllocArray(arena, PtrFix, datab_.ptrfixes.cap);
     AssetDataBuilder* datab = &datab_;
 
-    assetBegin(datab);
+    assetBeginData(datab);
 
     assetBeginStruct(datab);
     assetAddField(datab, "int w", atlas.w);
@@ -782,12 +808,23 @@ int main() {
     assetAddArrField(datab, "FirstLast delimiters", animationDelimiters.ptr, animationDelimiters.len);
     assetEndStruct(datab,  STR("animations"));
 
-    assetBeginStruct(datab);    
-    assetAddArrField(datab, "u8 allData", allShaderData.ptr, allShaderData.len);
-    assetAddArrField(datab, "u8arr elements", shaders.ptr, shaders.len);
-    assetEndStruct(datab,  STR("shaders"));
+    {
+        assetBeginStruct(datab);
+        assetAddArrField(datab, "u8 allData", allShaderData.ptr, allShaderData.len);
+        assetAddArrField(datab, "u8arr elements", shaders.ptr, shaders.len);
+        Str name = STR("shaders");
+        assetEndStruct(datab, name);
+        arrpush(datab->ptrfixes, ((PtrFix){name, shaders.len}));
+    }
 
-    assetEnd(datab);
+    assetEndData(datab);
+
+    assetBeginProc(datab);
+    for (i32 ptrfixIndex = 0; ptrfixIndex < datab->ptrfixes.len; ptrfixIndex++) {
+        PtrFix ptrfix = datab->ptrfixes.ptr[ptrfixIndex];
+        assetAddPtrFixLoop(datab, ptrfix.len, ptrfix.elementName);
+    }
+    assetEndProc(datab);
 
     // TODO(khvorov) Make animations in asset file be ptr/len
     // TODO(khvorov) Move everything in build.bat here
