@@ -312,6 +312,7 @@ static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
     );
 }
 
+// TODO(khvorov) Subtract base here?
 #define assetAddArrOfArr(Arena, Datab, Name, DataType, Arr, Data) assetAddArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
 static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
     assetBeginStruct(datab);
