@@ -811,6 +811,8 @@ int main() {
     assetEndProc(datab);
 
     // TODO(khvorov) Move everything in build.bat here
+    // TODO(khvorov) Put data.bin in build
+    // TODO(khvorov) Load data.bin relative to executable
 
     writeEntireFile(arena, STR("data/data.bin"), binb.ptr, binb.len);
     writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
