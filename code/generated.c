@@ -36,6 +36,14 @@ static const int globalAnimationCumulativeFrameCounts[AnimationID_Count] = {
     [AnimationID_Lemurian_Idle] = 0,
 };
 
+typedef enum ShaderID {
+    ShaderID_vs_sprite,
+    ShaderID_ps_sprite,
+    ShaderID_vs_screen,
+    ShaderID_ps_screen,
+    ShaderID_Count,
+} ShaderID;
+
 typedef struct AssetData {
     struct {
         int w;
@@ -47,4 +55,8 @@ typedef struct AssetData {
         float durations[4];
         FirstLast delimiters[3];
     } animations;
+    struct {
+        u8 allData[115992];
+        u8arr elements[4];
+    } shaders;
 } AssetData;

@@ -1,7 +1,4 @@
-#define COBJMACROS
 #include "common.c"
-
-#define assertHR(hr) assert(SUCCEEDED(hr))
 
 //
 // SECTION Input
@@ -122,18 +119,14 @@ typedef struct D3D11VSPS {
     ID3D11PixelShader* pshader;
 } D3D11VSPS;
 
-static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, Arena* arena, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, Str shadername) {
+static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, u8arr shadervs, u8arr shaderps) {
     D3D11VSPS result = {};
-    tempMemoryBlock(arena) {
-        u8arr shadervs = readEntireFile(arena, strfmt(arena, "data/rorclone.hlsl_vs_%.*s.bin", LIT(shadername)));
-        HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(device, shadervs.ptr, shadervs.len, NULL, &result.vshader);
-        assertHR(ID3D11Device_CreateVertexShaderResult);
-        HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(device, desc, descCount, shadervs.ptr, shadervs.len, &result.layout);
-        assertHR(ID3D11Device_CreateInputLayoutResult);
-        u8arr shaderps = readEntireFile(arena, strfmt(arena, "data/rorclone.hlsl_ps_%.*s.bin", LIT(shadername)));
-        HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(device, shaderps.ptr, shaderps.len, NULL, &result.pshader);
-        assertHR(ID3D11Device_CreatePixelShaderResult);
-    }
+    HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(device, shadervs.ptr, shadervs.len, NULL, &result.vshader);
+    assertHR(ID3D11Device_CreateVertexShaderResult);
+    HRESULT ID3D11Device_CreateInputLayoutResult = ID3D11Device_CreateInputLayout(device, desc, descCount, shadervs.ptr, shadervs.len, &result.layout);
+    assertHR(ID3D11Device_CreateInputLayoutResult);
+    HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(device, shaderps.ptr, shaderps.len, NULL, &result.pshader);
+    assertHR(ID3D11Device_CreatePixelShaderResult);
     return result;
 }
 
@@ -225,6 +218,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         u8arr data = readEntireFile(memory.perm, STR("data/data.bin"));
         assert(data.len == sizeof(AssetData));
         assetData = (AssetData*)data.ptr;
+    }
+
+    // TODO(khvorov) Autogen?
+    for (u32 shaderID = 0; shaderID < ShaderID_Count; shaderID++) {
+        u8arr* shader = assetData->shaders.elements + shaderID;
+        shader->ptr = assetData->shaders.allData + (u64)shader->ptr;
     }
 
     Animation* animations = arenaAllocAndZeroArray(memory.perm, Animation, AnimationID_Count);
@@ -383,7 +382,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        d3d11.rects.sprite.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("sprite"));
+        u8arr shadervs = assetData->shaders.elements[ShaderID_vs_sprite];
+        u8arr shaderps = assetData->shaders.elements[ShaderID_ps_sprite];
+        d3d11.rects.sprite.vsps = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps);
     }
 
     {
@@ -394,7 +395,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        d3d11.rects.screen.vsps = d3d11CreateVSPS(d3d11.device, memory.scratch, desc, arrayCount(desc), STR("screen"));
+        u8arr shadervs = assetData->shaders.elements[ShaderID_vs_screen];
+        u8arr shaderps = assetData->shaders.elements[ShaderID_ps_screen];
+        d3d11.rects.screen.vsps = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps);
     }
 
     {

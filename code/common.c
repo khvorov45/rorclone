@@ -18,6 +18,7 @@
 #define unused(x) ((x) = (x))
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
+#define arrpusharr(arr, val) assert((arr).len + (val).len <= (arr).cap); memcpy((arr).ptr + (arr).len, (val).ptr, (val).len * sizeof(*(val).ptr)); (arr).len += (val).len
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
 #define arenaAllocAndZeroArray(arena, type, count) ((type*)arenaAllocAndZero((arena), sizeof(type) * (count)))
 #define tempMemoryBlock(arena_) for (TempMemory _temp_ = beginTempMemory(arena_); _temp_.arena; endTempMemory(&_temp_))
@@ -168,8 +169,11 @@ typedef struct FirstLast {i32 first, last;} FirstLast;
 // SECTION Platform
 //
 
+#define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+#define assertHR(hr) assert(SUCCEEDED(hr))
 
 static u8arr readEntireFile(Arena* arena, Str path) {
     HANDLE hfile = 0;

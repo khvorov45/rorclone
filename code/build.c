@@ -1,9 +1,13 @@
+#define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #define assert(cond) do { if (cond) {} else {char msg[] = __FILE__ ":" STRINGIFY(__LINE__) ":1: error: assertion failure\n"; WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg, sizeof(msg) - 1, 0, 0); __debugbreak();} } while (0)
 #include "common.c"
 
 #include <stdlib.h>
+
+#include <d3dcompiler.h>
+#pragma comment (lib, "d3dcompiler")
 
 #define STBRP_STATIC
 #define STBRP_ASSERT(x) assert(x)
@@ -190,24 +194,24 @@ static void strbuilderfmt(StrBuilder* builder, char* fmt, ...) {
     builder->len += printResult;
 }
 
-static void builderEnumBegin(StrBuilder* builder, Str name) {
+static void strbuilderEnumBegin(StrBuilder* builder, Str name) {
     strbuilderfmt(builder, "typedef enum %.*s {\n", LIT(name));
     builder->currentName = name;
     builder->addCount = 0;
 }
 
-static void builderEnumAdd(StrBuilder* builder, Str name) {
+static void strbuilderEnumAdd(StrBuilder* builder, Str name) {
     strbuilderfmt(builder, "    %.*s_%.*s,\n", LIT(builder->currentName), LIT(name));
     builder->addCount += 1;
 }
 
-static void builderEnumEnd(StrBuilder* builder) {
+static void strbuilderEnumEnd(StrBuilder* builder) {
     strbuilderfmt(builder, "} %.*s;\n\n", LIT(builder->currentName));
     builder->currentName = (Str) {};
     builder->addCount = 0;
 }
 
-static void builderTableBegin(StrBuilder* builder, Str type, Str name, Str entryCount) {
+static void strbuilderTableBegin(StrBuilder* builder, Str type, Str name, Str entryCount) {
     strbuilderfmt(builder, "static const %.*s %.*s[%.*s] = {\n", LIT(type), LIT(name), LIT(entryCount));
     builder->addCount = 0;
 }
@@ -217,7 +221,7 @@ static void builderTableAdd(StrBuilder* builder, Str key, Str value) {
     builder->addCount += 1;
 }
 
-static void builderTableEnd(StrBuilder* builder) {
+static void strbuilderTableEnd(StrBuilder* builder) {
     strbuilderfmt(builder, "};\n\n");
     builder->addCount = 0;
 }
@@ -307,6 +311,8 @@ static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
 
     CloseHandle(hfile);
 }
+
+static void writeToStdout(Str msg) {WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg.ptr, msg.len, 0, 0);}
 
 typedef struct FileInfo {
     struct {Str entity, animation, file;} names;
@@ -451,42 +457,42 @@ int main() {
             }
         }
 
-        builderEnumBegin(strbuilder, STR("EntityID"));
-        builderEnumAdd(strbuilder, STR("None"));
-        for (i64 ind = 0; ind < entityNamesDedup.len; ind++) {builderEnumAdd(strbuilder, entityNamesDedup.ptr[ind]);}
-        builderEnumAdd(strbuilder, STR("Count"));
-        builderEnumEnd(strbuilder);
+        strbuilderEnumBegin(strbuilder, STR("EntityID"));
+        strbuilderEnumAdd(strbuilder, STR("None"));
+        for (i64 ind = 0; ind < entityNamesDedup.len; ind++) {strbuilderEnumAdd(strbuilder, entityNamesDedup.ptr[ind]);}
+        strbuilderEnumAdd(strbuilder, STR("Count"));
+        strbuilderEnumEnd(strbuilder);
     }
 
     Str* animationNames = arenaAllocArray(arena, Str, fileInfos.len);
 
-    builderEnumBegin(strbuilder, STR("AnimationID"));
-    builderEnumAdd(strbuilder, STR("None"));
+    strbuilderEnumBegin(strbuilder, STR("AnimationID"));
+    strbuilderEnumAdd(strbuilder, STR("None"));
     for (i64 ind = 0; ind < fileInfos.len; ind++) {
         FileInfo info = fileInfos.ptr[ind];
         Str animationName = strfmt(arena, "%.*s_%.*s", LIT(info.names.entity), LIT(info.names.animation));
-        builderEnumAdd(strbuilder, animationName);
+        strbuilderEnumAdd(strbuilder, animationName);
         animationNames[ind] = animationName;
     }
-    builderEnumAdd(strbuilder, STR("Count"));
-    builderEnumEnd(strbuilder);
+    strbuilderEnumAdd(strbuilder, STR("Count"));
+    strbuilderEnumEnd(strbuilder);
 
-    builderEnumBegin(strbuilder, STR("AtlasID"));
-    builderEnumAdd(strbuilder, STR("Whitepx"));
-    builderEnumAdd(strbuilder, STR("Font"));
+    strbuilderEnumBegin(strbuilder, STR("AtlasID"));
+    strbuilderEnumAdd(strbuilder, STR("Whitepx"));
+    strbuilderEnumAdd(strbuilder, STR("Font"));
     for (i64 ind = 0; ind < fileInfos.len; ind++) {
         FileInfo info = fileInfos.ptr[ind];
         Str animationName = animationNames[ind];
         for (int frameIndex = 0; frameIndex < info.content->frameCount; frameIndex++) {
             Str atlasName = strfmt(arena, "%.*s_frame%d", LIT(animationName), frameIndex + 1);
-            builderEnumAdd(strbuilder, atlasName);
+            strbuilderEnumAdd(strbuilder, atlasName);
         }
     }
     i32 totalAtlasTextureCount = strbuilder->addCount;
-    builderEnumAdd(strbuilder, STR("Count"));
-    builderEnumEnd(strbuilder);
+    strbuilderEnumAdd(strbuilder, STR("Count"));
+    strbuilderEnumEnd(strbuilder);
 
-    builderTableBegin(strbuilder, STR("int"), STR("globalFirstAtlasID"), STR("EntityID_Count"));
+    strbuilderTableBegin(strbuilder, STR("int"), STR("globalFirstAtlasID"), STR("EntityID_Count"));
     {
         Str currentEntity = {};
         for (i64 ind = 0; ind < fileInfos.len; ind++) {
@@ -499,9 +505,9 @@ int main() {
             }
         }
     }
-    builderTableEnd(strbuilder);
+    strbuilderTableEnd(strbuilder);
 
-    builderTableBegin(strbuilder, STR("int"), STR("globalAnimationCumulativeFrameCounts"), STR("AnimationID_Count"));
+    strbuilderTableBegin(strbuilder, STR("int"), STR("globalAnimationCumulativeFrameCounts"), STR("AnimationID_Count"));
     {
         i32 currentCumulativeCount = 0;
         Str currentEntity = {};
@@ -520,7 +526,7 @@ int main() {
             currentCumulativeCount += info.content->frameCount;
         }
     }
-    builderTableEnd(strbuilder);
+    strbuilderTableEnd(strbuilder);
 
     struct {Texture* ptr; i64 len, cap;} atlasTextures = {.cap = totalAtlasTextureCount};
     atlasTextures.ptr = arenaAllocArray(arena, Texture, atlasTextures.cap);
@@ -724,6 +730,38 @@ int main() {
         }
     }
 
+    strbuilderEnumBegin(strbuilder, STR("ShaderID"));
+    struct {u8arr* ptr; i32 len, cap;} shaders = {.cap = 1024};
+    shaders.ptr = arenaAllocArray(arena, u8arr, shaders.cap);
+    struct {u8* ptr; i64 len, cap;} allShaderData = {.cap = 50 * Megabyte};
+    allShaderData.ptr = arenaAllocArray(arena, u8, allShaderData.cap);
+    {
+        Str shaderSrcPath = STR("code/rorclone.hlsl");
+        u8arr shaderSrc = readEntireFile(arena, shaderSrcPath);
+        Str entryPoints[] = {STR("vs_sprite"), STR("ps_sprite"), STR("vs_screen"), STR("ps_screen")};
+        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+
+        for (u32 entryPointIndex = 0; entryPointIndex < arrayCount(entryPoints); entryPointIndex++) {
+            Str entryPoint = entryPoints[entryPointIndex];
+            ID3DBlob* vblob = 0;
+            ID3DBlob* error = 0;
+            Str target = strstarts(entryPoint, STR("vs")) ? STR("vs_5_0") : STR("ps_5_0");
+            HRESULT compileResult = D3DCompile(shaderSrc.ptr, shaderSrc.len, shaderSrcPath.ptr, NULL, NULL, entryPoint.ptr, target.ptr, flags, 0, &vblob, &error);
+            if (FAILED(compileResult)) {
+                Str message = {ID3D10Blob_GetBufferPointer(error), ID3D10Blob_GetBufferSize(error)};
+                writeToStdout(message);
+                assert(!"failed to compile");
+            }
+            u8arr shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
+            u8arr shaderDataCopy = {(void*)allShaderData.len, shaderDataOg.len};
+            arrpusharr(allShaderData, shaderDataOg);
+            arrpush(shaders, shaderDataCopy);
+            strbuilderEnumAdd(strbuilder, entryPoint);
+        }
+    }
+    strbuilderEnumAdd(strbuilder, STR("Count"));
+    strbuilderEnumEnd(strbuilder);
+
     BinBuilder binb = {.cap = 50 * Megabyte};
     binb.ptr = arenaAllocArray(arena, u8, binb.cap);
 
@@ -744,8 +782,14 @@ int main() {
     assetAddArrField(datab, "FirstLast delimiters", animationDelimiters.ptr, animationDelimiters.len);
     assetEndStruct(datab,  STR("animations"));
 
+    assetBeginStruct(datab);    
+    assetAddArrField(datab, "u8 allData", allShaderData.ptr, allShaderData.len);
+    assetAddArrField(datab, "u8arr elements", shaders.ptr, shaders.len);
+    assetEndStruct(datab,  STR("shaders"));
+
     assetEnd(datab);
 
+    // TODO(khvorov) Make animations in asset file be ptr/len
     // TODO(khvorov) Move everything in build.bat here
 
     writeEntireFile(arena, STR("data/data.bin"), binb.ptr, binb.len);
