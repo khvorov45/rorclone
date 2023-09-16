@@ -397,6 +397,19 @@ static int fileInfoCmp(const void* val1_, const void* val2_) {
     return result;
 }
 
+static u64 getClock(void) {
+    LARGE_INTEGER buildProgramStart = {};
+    QueryPerformanceCounter(&buildProgramStart);
+    return buildProgramStart.QuadPart;
+}
+
+static f32 getMsFrom(u64 before, LARGE_INTEGER freqPerSec) {
+    u64 now = getClock();
+    u64 diff = now - before;
+    f32 ms = (f32)diff / (f32)freqPerSec.QuadPart * 1000.0f;
+    return ms;
+}
+
 //
 // SECTION Bench
 //
@@ -455,6 +468,11 @@ void benchAlignment(Arena* arena) {
 //
 
 int main() {
+    u64 buildProgramStart = getClock();
+
+    LARGE_INTEGER performanceFrequencyPerSec = {};
+    QueryPerformanceFrequency(&performanceFrequencyPerSec);
+
     Arena arena_ = {.size = Gigabyte};
     arena_.base = VirtualAlloc(0, arena_.size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     assert(arena_.base);
@@ -846,9 +864,24 @@ int main() {
     }
     assetEndProc(datab);
 
-    // TODO(khvorov) Move everything in build.bat here
+    {
+        Str cmd = strfmt(arena, "clang code/rorclone.c -std=c2x -march=native -Wall -Wextra -g -o build/rorclone.exe");
+        writeToStdout(strfmt(arena, "%.*s\n", LIT(cmd)));
+        STARTUPINFOA startupInfo = {.cb = sizeof(startupInfo)};
+        PROCESS_INFORMATION procInfo = {};
+        BOOL CreateProcessResult = CreateProcessA(0, cmd.ptr, 0, 0, TRUE, 0, 0, 0, &startupInfo, &procInfo);
+        assert(CreateProcessResult);
+        DWORD WaitForSingleObjectResult = WaitForSingleObject(procInfo.hProcess, INFINITE);
+        assert(WaitForSingleObjectResult == WAIT_OBJECT_0);
+        DWORD exitCode = 0;
+        BOOL GetExitCodeProcessResult = GetExitCodeProcess(procInfo.hProcess, &exitCode);
+        assert(GetExitCodeProcessResult);
+        assert(exitCode == 0);
+    }
 
     writeEntireFile(arena, STR("build/rorclone.dat"), binb.ptr, binb.len);
     writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
+
+    writeToStdout(strfmt(arena, "finished in %.1fms\n", getMsFrom(buildProgramStart, performanceFrequencyPerSec)));
     return 0;
 }
