@@ -1,7 +1,10 @@
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
 #define assert(cond) do { if (cond) {} else {char msg[] = __FILE__ ":" STRINGIFY(__LINE__) ":1: error: assertion failure\n"; WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg, sizeof(msg) - 1, 0, 0); __debugbreak();} } while (0)
+#define assertHR(hr) assert(SUCCEEDED(hr))
+
 #include "common.c"
 
 #include <stdlib.h>
@@ -345,6 +348,39 @@ static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
     assert(bytesWritten == len);
 
     CloseHandle(hfile);
+}
+
+static u8arr readEntireFile(Arena* arena, Str path) {
+    HANDLE hfile = 0;
+    tempMemoryBlock(arena) {
+        Str path0 = strfmt(arena, "%.*s", LIT(path));
+
+        hfile = CreateFileA(
+            path0.ptr,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0
+        );
+        assert(hfile != INVALID_HANDLE_VALUE);
+    }
+
+    LARGE_INTEGER fileSize = {};
+    BOOL GetFileSizeExResult = GetFileSizeEx(hfile, &fileSize);
+    assert(GetFileSizeExResult);
+
+    void* fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
+    DWORD bytesRead = 0;
+    BOOL ReadFileResult = ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
+    assert(ReadFileResult);
+    assert(bytesRead == fileSize.QuadPart);
+
+    CloseHandle(hfile);
+
+    u8arr result = {fileContent, fileSize.QuadPart};
+    return result;
 }
 
 static void writeToStdout(Str msg) {WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg.ptr, msg.len, 0, 0);}
@@ -811,10 +847,8 @@ int main() {
     assetEndProc(datab);
 
     // TODO(khvorov) Move everything in build.bat here
-    // TODO(khvorov) Put data.bin in build
-    // TODO(khvorov) Load data.bin relative to executable
 
-    writeEntireFile(arena, STR("data/data.bin"), binb.ptr, binb.len);
+    writeEntireFile(arena, STR("build/rorclone.dat"), binb.ptr, binb.len);
     writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
     return 0;
 }

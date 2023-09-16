@@ -92,10 +92,14 @@ typedef struct CBuffer {
 #pragma comment (lib, "dxguid")
 #pragma comment (lib, "d3d11")
 
+#define COBJMACROS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <dxgidebug.h>
 
+#define assertHR(hr) assert(SUCCEEDED(hr))
 #define D3D11Destroy(x) x->lpVtbl->Release(x)
 
 static ID3D11Buffer* d3d11CreateDynBuffer(ID3D11Device* device, i64 size, D3D11_BIND_FLAG flag) {
@@ -214,10 +218,43 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     }
 
     AssetData* assetData = 0;
-    {
-        u8arr data = readEntireFile(memory.perm, STR("data/data.bin"));
-        assert(data.len == sizeof(AssetData));
-        assetData = (AssetData*)data.ptr;
+    tempMemoryBlock(memory.scratch) {
+        wchar_t* dataPath = 0;
+        {
+            wchar_t* exepath = arenaFreeptr(memory.scratch);
+            DWORD exepathLenInChars = GetModuleFileNameW((HMODULE)instance, exepath, arenaFreesize(memory.scratch) / sizeof(wchar_t));
+            memory.scratch->used += exepathLenInChars * sizeof(wchar_t);
+            exepath[exepathLenInChars - 3] = 'd';
+            exepath[exepathLenInChars - 2] = 'a';
+            exepath[exepathLenInChars - 1] = 't';
+            exepath[exepathLenInChars] = '\0';
+            dataPath = exepath;
+        }
+
+        HANDLE hfile = CreateFileW(
+            dataPath,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0
+        );
+        assert(hfile != INVALID_HANDLE_VALUE);
+
+        LARGE_INTEGER fileSize = {};
+        BOOL GetFileSizeExResult = GetFileSizeEx(hfile, &fileSize);
+        assert(GetFileSizeExResult);
+        assert(fileSize.QuadPart == sizeof(AssetData));
+
+        assetData = arenaAllocArray(memory.perm, AssetData, 1);
+        DWORD bytesRead = 0;
+        BOOL ReadFileResult = ReadFile(hfile, assetData, fileSize.QuadPart, &bytesRead, 0);
+        assert(ReadFileResult);
+        assert(bytesRead == fileSize.QuadPart);
+
+        CloseHandle(hfile);
+
         assetDataAfterLoad(assetData);
     }
 
