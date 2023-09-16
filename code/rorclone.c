@@ -510,8 +510,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         arrpush(game.sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
         arrpush(game.sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
         arrpush(game.sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
-
-        arrpush(game.screenRects, ((ScreenRect) {.scr = {{10, 20}, {4, 100}}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
     }
 
     drawStr(&game, STR("test"), (V2) {100, 300}, (V4) {.r = 100, .a = 100});
@@ -603,6 +601,25 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     sprite->currentAnimationCounterMS = 0;
                 } else {
                     sprite->currentAnimationCounterMS += msSinceLastUpdate;
+                }
+            }
+
+            // TODO(khvorov) How should strings behave when they are tied to in-game entities?
+            {
+                game.screenRects.len = 0;
+                arrpush(game.screenRects, ((ScreenRect) {.scr = {{10, 20}, {4, 100}}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+
+                {
+                    Sprite* sprite = game.sprites.ptr + 0;
+                    V2 scrTopleft = {};
+                    {
+                        V2 cameraSpace = v2sub(sprite->common.topleft, game.cameraPos);
+                        V2 pxFromCenter = v2scale(cameraSpace, game.spriteScaleMultiplier);
+                        pxFromCenter.y *= -1;
+                        V2 windowHalfDim = {window.w / 2, window.h / 2};
+                        scrTopleft = v2add(pxFromCenter, windowHalfDim);
+                    }
+                    drawStr(&game, STR("spritestr"), scrTopleft, (V4) {.g = 100, .a = 100});
                 }
             }
         }

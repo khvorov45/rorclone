@@ -142,7 +142,9 @@ static bool strstarts(Str str, Str start) {
 //
 
 typedef struct V2 { f32 x, y; } V2;
+static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
+static V2 v2scale(V2 v, f32 by) {return (V2) {.x = v.x * by, .y = v.y * by};}
 
 typedef struct Rect {
     V2 topleft;
