@@ -308,6 +308,7 @@ static void assetEndProc(AssetDataBuilder* datab) {
 
 static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
     assetIndent(datab);
+    // NOTE(khvorov) Pointers are offsets (in elements) from the base of allData, so make them into actual pointers by adding the base of allData
     strbuilderfmt(datab->str,
         "for (u32 ind = 0; ind < %d; ind++) {"
         "adata->%.*s.elements[ind].ptr = adata->%.*s.allData + (u64)adata->%.*s.elements[ind].ptr;"
@@ -315,9 +316,15 @@ static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
     );
 }
 
-// TODO(khvorov) Subtract base here?
+typedef struct ArrType {void* ptr;} ArrType;
 #define assetAddArrOfArr(Arena, Datab, Name, DataType, Arr, Data) assetAddArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
 static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
+    // NOTE(khvorov) Make pointers in array elements be offsets (in elements) from the base of allData
+    for (i64 arrElIndex = 0; arrElIndex < arrElementCount; arrElIndex++) {
+        ArrType* arr = (ArrType*)(arrPtr + (arrElIndex * arrElementSize));
+        assert(arr->ptr >= allDataPtr);
+        arr->ptr = (void*)(((u64)arr->ptr - (u64)allDataPtr) / allDataElementSize);
+    }
     assetBeginStruct(datab);
     assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
     assetAddArrField_(datab, strfmt(arena, "%*sarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
@@ -703,7 +710,7 @@ int main() {
 
         Animation* animation = animations.ptr + fileInfoIndex;
         animation->frameCount = ase->frameCount;
-        animation->frameDurationsInMS = (void*)allAnimationDurations.len;
+        animation->frameDurationsInMS = allAnimationDurations.ptr + allAnimationDurations.len;
 
         for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
             assert(frame->magic == 0xF1FA);
@@ -827,7 +834,7 @@ int main() {
                 assert(!"failed to compile");
             }
             u8arr shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
-            u8arr shaderDataCopy = {(void*)allShaderData.len, shaderDataOg.len};
+            u8arr shaderDataCopy = {allShaderData.ptr + allShaderData.len, shaderDataOg.len};
             arrpusharr(allShaderData, shaderDataOg);
             arrpush(shaders, shaderDataCopy);
             strbuilderEnumAdd(strbuilder, entryPoint);
