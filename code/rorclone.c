@@ -66,15 +66,15 @@ typedef struct SpriteRect {
     AtlasLocation texInAtlas;
 } SpriteRect;
 
-//
-// SECTION Platform
-//
-
 typedef struct ScreenRect {
     V2 pos, dim;
     Rect texInAtlas;
     V4 color;
 } ScreenRect;
+
+//
+// SECTION Platform
+//
 
 typedef struct CBuffer {
     V2 windowDim;
@@ -121,9 +121,10 @@ typedef struct D3D11VSPS {
     ID3D11InputLayout* layout;
     ID3D11VertexShader* vshader;
     ID3D11PixelShader* pshader;
+    ID3D11Buffer* instanceBuf;
 } D3D11VSPS;
 
-static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, u8arr shadervs, u8arr shaderps) {
+static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, u8arr shadervs, u8arr shaderps, i64 instanceBufSize) {
     D3D11VSPS result = {};
     HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(device, shadervs.ptr, shadervs.len, NULL, &result.vshader);
     assertHR(ID3D11Device_CreateVertexShaderResult);
@@ -131,6 +132,7 @@ static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC*
     assertHR(ID3D11Device_CreateInputLayoutResult);
     HRESULT ID3D11Device_CreatePixelShaderResult = ID3D11Device_CreatePixelShader(device, shaderps.ptr, shaderps.len, NULL, &result.pshader);
     assertHR(ID3D11Device_CreatePixelShaderResult);
+    result.instanceBuf = d3d11CreateDynBuffer(device, instanceBufSize, D3D11_BIND_VERTEX_BUFFER);
     return result;
 }
 
@@ -138,6 +140,7 @@ static void d3d11DestroyVSPS(D3D11VSPS vsps) {
     D3D11Destroy(vsps.layout);
     D3D11Destroy(vsps.vshader);
     D3D11Destroy(vsps.pshader);
+    D3D11Destroy(vsps.instanceBuf);
 }
 
 static void d3d11CopyBuf(ID3D11DeviceContext* context, ID3D11Buffer* dest, void* src, i64 size) {
@@ -147,12 +150,12 @@ static void d3d11CopyBuf(ID3D11DeviceContext* context, ID3D11Buffer* dest, void*
     context->lpVtbl->Unmap(context, (ID3D11Resource*)dest, 0);
 }
 
-static void d3d11DrawRects(ID3D11DeviceContext* context, ID3D11Buffer* instanceBuffer, D3D11VSPS vsps, UINT rectSize, i64 rectCount) {
+static void d3d11DrawRects(ID3D11DeviceContext* context, D3D11VSPS vsps, UINT rectSize, i64 rectCount) {
     ID3D11DeviceContext_IASetInputLayout(context, vsps.layout);
     {
         UINT stride = rectSize;
         UINT offset = 0;
-        ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &instanceBuffer, &stride, &offset);
+        ID3D11DeviceContext_IASetVertexBuffers(context, 0, 1, &vsps.instanceBuf, &stride, &offset);
     }
     ID3D11DeviceContext_VSSetShader(context, vsps.vshader, NULL, 0);
     ID3D11DeviceContext_PSSetShader(context, vsps.pshader, NULL, 0);
@@ -217,7 +220,21 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         memory.scratch->size = size - memory.perm->size;
     }
 
-    AssetData* assetData = 0;
+    struct {
+        AssetData* assets;
+        struct {Sprite* ptr; i64 len; i64 cap;} sprites;
+        struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
+        f32 spriteScaleMultiplier;
+        V2 cameraPos;
+    } game = {
+        .screenRects.cap = 1024,
+        .sprites.cap = 1024,
+        .spriteScaleMultiplier = 4.4f,
+    };
+    game.sprites.ptr = arenaAllocArray(memory.perm, Sprite, game.sprites.cap);
+    game.screenRects.ptr = arenaAllocArray(memory.perm, ScreenRect, game.screenRects.cap);
+
+    // NOTE(khvorov) Assets
     tempMemoryBlock(memory.scratch) {
         wchar_t* dataPath = 0;
         {
@@ -247,19 +264,16 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assert(GetFileSizeExResult);
         assert(fileSize.QuadPart == sizeof(AssetData));
 
-        assetData = arenaAllocArray(memory.perm, AssetData, 1);
+        game.assets = arenaAllocArray(memory.perm, AssetData, 1);
         DWORD bytesRead = 0;
-        BOOL ReadFileResult = ReadFile(hfile, assetData, fileSize.QuadPart, &bytesRead, 0);
+        BOOL ReadFileResult = ReadFile(hfile, game.assets, fileSize.QuadPart, &bytesRead, 0);
         assert(ReadFileResult);
         assert(bytesRead == fileSize.QuadPart);
 
         CloseHandle(hfile);
 
-        assetDataAfterLoad(assetData);
+        assetDataAfterLoad(game.assets);
     }
-
-    struct {Sprite* ptr; i64 len; i64 cap;} sprites = {.cap = 1024};
-    sprites.ptr = arenaAllocArray(memory.perm, Sprite, sprites.cap);
 
     struct {
         HWND hwnd;
@@ -301,16 +315,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device* device;
         ID3D11DeviceContext* context;
         IDXGISwapChain1* swapChain;
-        struct {ID3D11Buffer* buf; CBuffer storage;} cbuffer;
+        ID3D11Buffer* cbuffer;
         ID3D11ShaderResourceView* textureView;
         ID3D11BlendState* blendState;
         ID3D11RasterizerState* rasterizer;
         ID3D11RenderTargetView* rtView;
         ID3D11SamplerState* sampler;
         struct {
-            // TODO(khvorov) Compress?
-            struct { D3D11VSPS vsps; ID3D11Buffer* buf; } sprite;
-            struct { D3D11VSPS vsps; ID3D11Buffer* buf; struct {ScreenRect* ptr; i64 len; i64 cap;} storage; } screen;
+            D3D11VSPS sprite;
+            D3D11VSPS screen;
         } rects;
     } d3d11 = {};
 
@@ -386,15 +399,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         IDXGIDevice_Release(dxgiDevice);
     }
 
-    d3d11.rects.sprite.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(SpriteRect) * sprites.cap, D3D11_BIND_VERTEX_BUFFER);
-
-    {
-        d3d11.rects.screen.storage.cap = sprites.cap;
-        i64 size = sizeof(*d3d11.rects.screen.storage.ptr) * d3d11.rects.screen.storage.cap;
-        d3d11.rects.screen.buf = d3d11CreateDynBuffer(d3d11.device, size, D3D11_BIND_VERTEX_BUFFER);
-        d3d11.rects.screen.storage.ptr = arenaAlloc(memory.perm, size);
-    }
-
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
             {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
@@ -403,9 +407,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = assetData->shaders.elements[ShaderID_vs_sprite];
-        u8arr shaderps = assetData->shaders.elements[ShaderID_ps_sprite];
-        d3d11.rects.sprite.vsps = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps);
+        u8arr shadervs = game.assets->shaders.elements[ShaderID_vs_sprite];
+        u8arr shaderps = game.assets->shaders.elements[ShaderID_ps_sprite];
+        d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game.sprites.cap);
     }
 
     {
@@ -416,13 +420,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = assetData->shaders.elements[ShaderID_vs_screen];
-        u8arr shaderps = assetData->shaders.elements[ShaderID_ps_screen];
-        d3d11.rects.screen.vsps = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps);
+        u8arr shadervs = game.assets->shaders.elements[ShaderID_vs_screen];
+        u8arr shaderps = game.assets->shaders.elements[ShaderID_ps_screen];
+        d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game.screenRects.cap);
     }
 
     {
-        Texture atlas = { .pixels = assetData->atlas.pixels, .w = assetData->atlas.w, .h = assetData->atlas.h};
+        Texture atlas = { .pixels = game.assets->atlas.pixels, .w = game.assets->atlas.w, .h = game.assets->atlas.h};
 
         D3D11_TEXTURE2D_DESC desc = {
             .Width = atlas.w,
@@ -444,8 +448,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateTexture2D(d3d11.device, &desc, &data, &texture);
         ID3D11Device_CreateShaderResourceView(d3d11.device, (ID3D11Resource*)texture, NULL, &d3d11.textureView);
         ID3D11Texture2D_Release(texture);
-
-        d3d11.cbuffer.storage.atlasDim = (V2) {atlas.w, atlas.h};
     }
 
     {
@@ -482,19 +484,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         ID3D11Device_CreateRasterizerState(d3d11.device, &desc, &d3d11.rasterizer);
     }
 
-    {
-        d3d11.cbuffer.buf = d3d11CreateDynBuffer(d3d11.device, sizeof(CBuffer), D3D11_BIND_CONSTANT_BUFFER);
-    }
+    d3d11.cbuffer = d3d11CreateDynBuffer(d3d11.device, sizeof(CBuffer), D3D11_BIND_CONSTANT_BUFFER);
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
     {
-        arrpush(sprites, ((Sprite) {.common.pos = {0, 0}, .entity = EntityID_Commando}));
-        arrpush(sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
-        arrpush(sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
+        arrpush(game.sprites, ((Sprite) {.common.pos = {0, 0}, .entity = EntityID_Commando}));
+        arrpush(game.sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        arrpush(game.sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
 
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = assetData->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-        arrpush(d3d11.rects.screen.storage, ((ScreenRect) {.pos = {10, 200}, .dim = assetData->atlas.locations[AtlasID_Font].rect.dim, .texInAtlas = assetData->atlas.locations[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(game.screenRects, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+        arrpush(game.screenRects, ((ScreenRect) {.pos = {10, 200}, .dim = game.assets->atlas.locations[AtlasID_Font].rect.dim, .texInAtlas = game.assets->atlas.locations[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
     }
 
     // TODO(khvorov) Killfocus message
@@ -557,7 +557,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         {
             f32 deltaX = 0.01f * msSinceLastUpdate;
-            Sprite* sprite = sprites.ptr;
+            Sprite* sprite = game.sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
             sprite->animationID = AnimationID_Commando_Idle;
             if (input.keys[InputKeyID_Left].down) {
@@ -578,7 +578,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
 
             {
-                Animation* animation = (Animation*)assetData->animations.elements + sprite->animationID;
+                Animation* animation = (Animation*)game.assets->animations.elements + sprite->animationID;
                 if (sprite->currentAnimationCounterMS >= animation->frameDurationsInMS[sprite->animationFrame]) {
                     sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
                     sprite->currentAnimationCounterMS = 0;
@@ -586,9 +586,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     sprite->currentAnimationCounterMS += msSinceLastUpdate;
                 }
             }
-
-            d3d11.cbuffer.storage.cameraPos = (V2) {0, 0};
-            d3d11.cbuffer.storage.spriteScaleMultiplier = 4.4f;
         }
 
         {
@@ -626,27 +623,35 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             }
         }
 
-        d3d11.cbuffer.storage.windowDim = (V2) {window.w, window.h};
-
         if (d3d11.rtView) {
+            d3d11CopyBuf(d3d11.context, d3d11.rects.screen.instanceBuf, game.screenRects.ptr, game.screenRects.len * sizeof(*game.screenRects.ptr));
 
+            // NOTE(khvorov) Copy sprites
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
-                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
                 SpriteRect* spriteRects = mapped.pData;
-                for (i64 spriteIndex = 0; spriteIndex < sprites.len; spriteIndex++) {
-                    Sprite* sprite = sprites.ptr + spriteIndex;
+                for (i64 spriteIndex = 0; spriteIndex < game.sprites.len; spriteIndex++) {
+                    Sprite* sprite = game.sprites.ptr + spriteIndex;
                     SpriteRect* spriteRect = spriteRects + spriteIndex;
                     spriteRect->common = sprite->common;
-
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
-                    spriteRect->texInAtlas = assetData->atlas.locations[id];
+                    spriteRect->texInAtlas = game.assets->atlas.locations[id];
                 }
-                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.buf, 0);
+                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
 
-            d3d11CopyBuf(d3d11.context, d3d11.rects.screen.buf, d3d11.rects.screen.storage.ptr, d3d11.rects.screen.storage.len * sizeof(*d3d11.rects.screen.storage.ptr));
-            d3d11CopyBuf(d3d11.context, d3d11.cbuffer.buf, &d3d11.cbuffer.storage, sizeof(d3d11.cbuffer.storage));
+            // NOTE(khvorov) Set cbuffer            
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                CBuffer* cbuf = (CBuffer*)mapped.pData;
+                cbuf->windowDim = (V2) {window.w, window.h};
+                cbuf->atlasDim = (V2) {game.assets->atlas.w, game.assets->atlas.h};
+                cbuf->cameraPos = game.cameraPos;
+                cbuf->spriteScaleMultiplier = game.spriteScaleMultiplier;
+                d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0);
+            }
 
             D3D11_VIEWPORT viewport = {
                 .TopLeftX = 0,
@@ -663,8 +668,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             ID3D11DeviceContext_IASetPrimitiveTopology(d3d11.context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
             ID3D11DeviceContext_PSSetShaderResources(d3d11.context, 0, 1, &d3d11.textureView);
 
-            d3d11.context->lpVtbl->VSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
-            d3d11.context->lpVtbl->PSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer.buf);
+            d3d11.context->lpVtbl->VSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer);
+            d3d11.context->lpVtbl->PSSetConstantBuffers(d3d11.context, 0, 1, &d3d11.cbuffer);
 
             ID3D11DeviceContext_RSSetViewports(d3d11.context, 1, &viewport);
             ID3D11DeviceContext_RSSetState(d3d11.context, d3d11.rasterizer);
@@ -674,8 +679,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             ID3D11DeviceContext_PSSetSamplers(d3d11.context, 0, 1, &d3d11.sampler);
 
-            d3d11DrawRects(d3d11.context, d3d11.rects.sprite.buf, d3d11.rects.sprite.vsps, sizeof(SpriteRect), sprites.len);
-            d3d11DrawRects(d3d11.context, d3d11.rects.screen.buf, d3d11.rects.screen.vsps, sizeof(*d3d11.rects.screen.storage.ptr), d3d11.rects.screen.storage.len);
+            d3d11DrawRects(d3d11.context, d3d11.rects.sprite, sizeof(SpriteRect), game.sprites.len);
+            d3d11DrawRects(d3d11.context, d3d11.rects.screen, sizeof(*game.screenRects.ptr), game.screenRects.len);
         }
 
         {
@@ -695,17 +700,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     D3D11Destroy(d3d11.device);
     D3D11Destroy(d3d11.context);
     D3D11Destroy(d3d11.swapChain);
-    D3D11Destroy(d3d11.cbuffer.buf);
+    D3D11Destroy(d3d11.cbuffer);
     D3D11Destroy(d3d11.textureView);
     D3D11Destroy(d3d11.blendState);
     D3D11Destroy(d3d11.rasterizer);
     D3D11Destroy(d3d11.rtView);
     D3D11Destroy(d3d11.sampler);
-
-    #define D3D11DestroyRects(Rects) D3D11Destroy(Rects.buf); d3d11DestroyVSPS(Rects.vsps)
-    D3D11DestroyRects(d3d11.rects.sprite);
-    D3D11DestroyRects(d3d11.rects.screen);
-    #undef D3D11DestroyRects
+    d3d11DestroyVSPS(d3d11.rects.sprite);
+    d3d11DestroyVSPS(d3d11.rects.screen);
 
     return 0;
 }
