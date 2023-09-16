@@ -42,7 +42,12 @@ typedef enum ShaderID {
     ShaderID_Count,
 } ShaderID;
 
+#pragma pack(push)
+#pragma pack(1)
 typedef struct AssetData {
+    struct {
+        int glyphW;
+    } font;
     struct {
         int w;
         int h;
@@ -54,10 +59,11 @@ typedef struct AssetData {
         f32arr elements[3];
     } animations;
     struct {
-        u8 allData[115992];
+        u8 allData[116000];
         u8arr elements[4];
     } shaders;
 } AssetData;
+#pragma pack(pop)
 
 static void assetDataAfterLoad(AssetData* adata) {
     for (u32 ind = 0; ind < 3; ind++) {adata->animations.elements[ind].ptr = adata->animations.allData + (u64)adata->animations.elements[ind].ptr;}

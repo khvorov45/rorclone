@@ -1,6 +1,6 @@
 struct VS_INPUT_SPRITE {
     uint index : SV_VertexID;
-    float2 pos : POS;
+    float2 topleft : TOPLEFT;
     int mirrorX : MIRRORX;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
@@ -9,7 +9,7 @@ struct VS_INPUT_SPRITE {
 
 struct VS_INPUT_SCREEN {
     uint index : SV_VertexID;
-    float2 pos : POS;
+    float2 topleft : TOPLEFT;
     float2 dim : DIM;
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
@@ -44,7 +44,7 @@ Texture2D<float4> texture0 : register(t0);
 
 PS_INPUT_SCREEN vs_screen(VS_INPUT_SCREEN input) {
     float2 offsetForCenter = input.dim / 2;
-    float2 offsetPos = input.pos + offsetForCenter;
+    float2 offsetPos = input.topleft + offsetForCenter;
     float2 posInClip = offsetPos / windowDim * 2 - 1;
     posInClip.y *= -1;
 
@@ -76,7 +76,7 @@ PS_INPUT_SPRITE vs_sprite(VS_INPUT_SPRITE input) {
     offsetForCenter.y *= -1;
     if (input.mirrorX) offsetForCenter.x *= -1;
 
-    float2 offsetPos = input.pos + offsetForCenter;
+    float2 offsetPos = input.topleft + offsetForCenter;
     float2 posInCamera = offsetPos - cameraPos;
     float2 posInClip = posInCamera / cameraHalfSpan;
     float2 dimInClip = scrdim / windowDim * 2;

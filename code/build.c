@@ -261,12 +261,12 @@ static void assetIndent(AssetDataBuilder* datab) {
 }
 
 static void assetBeginData(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "typedef struct AssetData {\n");
+    strbuilderfmt(datab->str, "#pragma pack(push)\n#pragma pack(1)\ntypedef struct AssetData {\n");
     datab->currentIndLevel += 1;
 }
 
 static void assetEndData(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "} AssetData;\n\n");
+    strbuilderfmt(datab->str, "} AssetData;\n#pragma pack(pop)\n\n");
     datab->currentIndLevel -= 1;
 }
 
@@ -631,8 +631,8 @@ int main() {
         arrpush(atlasTextures, whitePxTex);
     }
 
+    struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
     {
-        struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
         font.tex.w = font.glyphW * font.glyphCount + (font.glyphCount - 1) * font.gapW;
         font.tex.h = font.glyphH;
         font.tex.pixels = arenaAllocArray(arena, u32, font.tex.w * font.tex.h);
@@ -853,6 +853,10 @@ int main() {
     assetBeginData(datab);
 
     assetBeginStruct(datab);
+    assetAddField(datab, "int glyphW", font.glyphW);
+    assetEndStruct(datab, STR("font"));
+
+    assetBeginStruct(datab);
     assetAddField(datab, "int w", atlas.w);
     assetAddField(datab, "int h", atlas.h);
     assetAddArrField(datab, "unsigned int pixels", atlas.pixels, atlas.w * atlas.h);
@@ -871,6 +875,8 @@ int main() {
     }
     assetEndProc(datab);
 
+    writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
+
     {
         Str cmd = strfmt(arena, "clang code/rorclone.c -std=c2x -march=native -Wall -Wextra -g -o build/rorclone.exe");
         writeToStdout(strfmt(arena, "%.*s\n", LIT(cmd)));
@@ -887,7 +893,6 @@ int main() {
     }
 
     writeEntireFile(arena, STR("build/rorclone.dat"), binb.ptr, binb.len);
-    writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
 
     writeToStdout(strfmt(arena, "finished in %.1fms\n", getMsFrom(buildProgramStart, performanceFrequencyPerSec)));
     return 0;

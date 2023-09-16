@@ -49,7 +49,7 @@ static AtlasID getAtlasID(EntityID entity, AnimationID animation, i32 animationF
 }
 
 typedef struct SpriteCommon {
-    V2 pos;
+    V2 topleft;
     i32 mirrorX;
 } SpriteCommon;
 
@@ -67,10 +67,34 @@ typedef struct SpriteRect {
 } SpriteRect;
 
 typedef struct ScreenRect {
-    V2 pos, dim;
+    Rect scr;
     Rect texInAtlas;
     V4 color;
 } ScreenRect;
+
+typedef struct Game {
+    AssetData* assets;
+    struct {Sprite* ptr; i64 len; i64 cap;} sprites;
+    struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
+    f32 spriteScaleMultiplier;
+    V2 cameraPos;
+} Game;
+
+static void drawGlyph(Game* game, char glyph, V2 topleft, V4 color) {
+    i32 glyphXOffset = (i32)glyph * (game->assets->font.glyphW + 2);
+    Rect atlas = game->assets->atlas.locations[AtlasID_Font].rect;
+    Rect glyphRect = {.topleft = {atlas.topleft.x + glyphXOffset, atlas.topleft.y}, .dim = {game->assets->font.glyphW + 2, atlas.dim.y}};
+    arrpush(game->screenRects, ((ScreenRect) {.scr.topleft = topleft, .scr.dim = glyphRect.dim, .texInAtlas = glyphRect, .color = color}));
+}
+
+static void drawStr(Game* game, Str str, V2 topleft, V4 color) {
+    V2 currentTopleft = topleft;
+    for (i64 charIndex = 0; charIndex < str.len; charIndex++) {
+        char ch = str.ptr[charIndex];
+        drawGlyph(game, ch, currentTopleft, color);
+        currentTopleft.x += game->assets->font.glyphW;
+    }
+}
 
 //
 // SECTION Platform
@@ -220,13 +244,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         memory.scratch->size = size - memory.perm->size;
     }
 
-    struct {
-        AssetData* assets;
-        struct {Sprite* ptr; i64 len; i64 cap;} sprites;
-        struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
-        f32 spriteScaleMultiplier;
-        V2 cameraPos;
-    } game = {
+    Game game = {
         .screenRects.cap = 1024,
         .sprites.cap = 1024,
         .spriteScaleMultiplier = 4.4f,
@@ -401,7 +419,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TOPLEFT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, common.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"MIRRORX", 0, DXGI_FORMAT_R32_SINT, 0, offsetof(SpriteRect, common.mirrorX), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
@@ -414,8 +432,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     {
         D3D11_INPUT_ELEMENT_DESC desc[] = {
-            {"POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, pos), D3D11_INPUT_PER_INSTANCE_DATA, 1},
-            {"DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"TOPLEFT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, scr.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, scr.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
@@ -489,13 +507,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
     {
-        arrpush(game.sprites, ((Sprite) {.common.pos = {0, 0}, .entity = EntityID_Commando}));
-        arrpush(game.sprites, ((Sprite) {.common.pos = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
-        arrpush(game.sprites, ((Sprite) {.common.pos = {20, -20}, .entity = EntityID_Lemurian}));
+        arrpush(game.sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
+        arrpush(game.sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        arrpush(game.sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
 
-        arrpush(game.screenRects, ((ScreenRect) {.pos = {10, 20}, .dim = {4, 100}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
-        arrpush(game.screenRects, ((ScreenRect) {.pos = {10, 200}, .dim = game.assets->atlas.locations[AtlasID_Font].rect.dim, .texInAtlas = game.assets->atlas.locations[AtlasID_Font].rect, .color = {.r = 1, .g = 1, .b = 1, .a = 1}}));
+        arrpush(game.screenRects, ((ScreenRect) {.scr = {{10, 20}, {4, 100}}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
     }
+
+    drawStr(&game, STR("test"), (V2) {100, 300}, (V4) {.r = 100, .a = 100});
 
     // TODO(khvorov) Killfocus message
     Input input = {};
@@ -562,19 +581,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             sprite->animationID = AnimationID_Commando_Idle;
             if (input.keys[InputKeyID_Left].down) {
                 sprite->common.mirrorX = true;
-                sprite->common.pos.x -= deltaX;
+                sprite->common.topleft.x -= deltaX;
                 sprite->animationID = AnimationID_Commando_Walk;
             }
             if (input.keys[InputKeyID_Right].down) {
                 sprite->common.mirrorX = false;
-                sprite->common.pos.x += deltaX;
+                sprite->common.topleft.x += deltaX;
                 sprite->animationID = AnimationID_Commando_Walk;
             }
             if (input.keys[InputKeyID_Up].down) {
-                sprite->common.pos.y += deltaX;
+                sprite->common.topleft.y += deltaX;
             }
             if (input.keys[InputKeyID_Down].down) {
-                sprite->common.pos.y -= deltaX;
+                sprite->common.topleft.y -= deltaX;
             }
 
             {
@@ -641,7 +660,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
 
-            // NOTE(khvorov) Set cbuffer            
+            // NOTE(khvorov) Set cbuffer
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
                 d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
