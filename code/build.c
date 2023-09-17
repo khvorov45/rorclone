@@ -817,28 +817,37 @@ int main() {
     struct {u8* ptr; i64 len, cap;} allShaderData = {.cap = 50 * Megabyte};
     allShaderData.ptr = arenaAllocArray(arena, u8, allShaderData.cap);
     {
-        Str shaderSrcPath = STR("code/rorclone.hlsl");
-        u8arr shaderSrc = readEntireFile(arena, shaderSrcPath);
-        Str entryPoints[] = {STR("vs_sprite"), STR("ps_sprite"), STR("vs_screen"), STR("ps_screen")};
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+        WIN32_FIND_DATAA findData = {};
+        HANDLE findHandle = FindFirstFileA("code/*.hlsl", &findData);
+        assert(findHandle != INVALID_HANDLE_VALUE);
+        do {
+            Str shaderFilename = strfmt(arena, "%s", findData.cFileName);
+            Str shaderSrcPath = strfmt(arena, "code/%.*s", LIT(shaderFilename));
 
-        for (u32 entryPointIndex = 0; entryPointIndex < arrayCount(entryPoints); entryPointIndex++) {
-            Str entryPoint = entryPoints[entryPointIndex];
-            ID3DBlob* vblob = 0;
-            ID3DBlob* error = 0;
-            Str target = strstarts(entryPoint, STR("vs")) ? STR("vs_5_0") : STR("ps_5_0");
-            HRESULT compileResult = D3DCompile(shaderSrc.ptr, shaderSrc.len, shaderSrcPath.ptr, NULL, NULL, entryPoint.ptr, target.ptr, flags, 0, &vblob, &error);
-            if (FAILED(compileResult)) {
-                Str message = {ID3D10Blob_GetBufferPointer(error), ID3D10Blob_GetBufferSize(error)};
-                writeToStdout(message);
-                assert(!"failed to compile");
+            u8arr shaderSrc = readEntireFile(arena, shaderSrcPath);
+            Str entryPoints[] = {STR("vs"), STR("ps")};
+            UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+            for (u32 entryPointIndex = 0; entryPointIndex < arrayCount(entryPoints); entryPointIndex++) {
+                Str entryPoint = entryPoints[entryPointIndex];
+                ID3DBlob* vblob = 0;
+                ID3DBlob* error = 0;
+                Str target = strstarts(entryPoint, STR("vs")) ? STR("vs_5_0") : STR("ps_5_0");
+                HRESULT compileResult = D3DCompile(shaderSrc.ptr, shaderSrc.len, shaderSrcPath.ptr, NULL, NULL, entryPoint.ptr, target.ptr, flags, 0, &vblob, &error);
+                if (FAILED(compileResult)) {
+                    Str message = {ID3D10Blob_GetBufferPointer(error), ID3D10Blob_GetBufferSize(error)};
+                    writeToStdout(message);
+                    assert(!"failed to compile");
+                }
+                u8arr shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
+                u8arr shaderDataCopy = {allShaderData.ptr + allShaderData.len, shaderDataOg.len};
+                arrpusharr(allShaderData, shaderDataOg);
+                arrpush(shaders, shaderDataCopy);
+                Str fileNameNoExt = strslice(shaderFilename, 0, shaderFilename.len - (sizeof(".hlsl") - 1));
+                Str enumLabel = strfmt(arena, "%.*s_%.*s", LIT(fileNameNoExt), LIT(entryPoint));
+                strbuilderEnumAdd(strbuilder, enumLabel);
             }
-            u8arr shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
-            u8arr shaderDataCopy = {allShaderData.ptr + allShaderData.len, shaderDataOg.len};
-            arrpusharr(allShaderData, shaderDataOg);
-            arrpush(shaders, shaderDataCopy);
-            strbuilderEnumAdd(strbuilder, entryPoint);
-        }
+
+        } while (FindNextFileA(findHandle, &findData));
     }
     strbuilderEnumAdd(strbuilder, STR("Count"));
     strbuilderEnumEnd(strbuilder);

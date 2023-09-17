@@ -425,8 +425,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game.assets->shaders.elements[ShaderID_vs_sprite];
-        u8arr shaderps = game.assets->shaders.elements[ShaderID_ps_sprite];
+        u8arr shadervs = game.assets->shaders.elements[ShaderID_sprite_vs];
+        u8arr shaderps = game.assets->shaders.elements[ShaderID_sprite_ps];
         d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game.sprites.cap);
     }
 
@@ -438,8 +438,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game.assets->shaders.elements[ShaderID_vs_screen];
-        u8arr shaderps = game.assets->shaders.elements[ShaderID_ps_screen];
+        u8arr shadervs = game.assets->shaders.elements[ShaderID_screen_vs];
+        u8arr shaderps = game.assets->shaders.elements[ShaderID_screen_ps];
         d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game.screenRects.cap);
     }
 

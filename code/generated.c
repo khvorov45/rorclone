@@ -35,10 +35,10 @@ static const int globalAnimationCumulativeFrameCounts[AnimationID_Count] = {
 };
 
 typedef enum ShaderID {
-    ShaderID_vs_sprite,
-    ShaderID_ps_sprite,
-    ShaderID_vs_screen,
-    ShaderID_ps_screen,
+    ShaderID_screen_vs,
+    ShaderID_screen_ps,
+    ShaderID_sprite_vs,
+    ShaderID_sprite_ps,
     ShaderID_Count,
 } ShaderID;
 
@@ -59,7 +59,7 @@ typedef struct AssetData {
         f32arr elements[3];
     } animations;
     struct {
-        u8 allData[116000];
+        u8 allData[93320];
         u8arr elements[4];
     } shaders;
 } AssetData;
