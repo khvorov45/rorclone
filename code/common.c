@@ -141,10 +141,14 @@ static bool strstarts(Str str, Str start) {
 // SECTION Misc
 //
 
+static f32 lerp(f32 from, f32 to, f32 by) {return from * (1 - by) + to * by;}
+
 typedef struct V2 { f32 x, y; } V2;
 static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
 static V2 v2scale(V2 v, f32 by) {return (V2) {.x = v.x * by, .y = v.y * by};}
+static V2 v2lerp(V2 v1, V2 v2, f32 by) {return (V2) {lerp(v1.x, v2.x, by), lerp(v1.y, v2.y, by)};}
+static bool v2eq(V2 v1, V2 v2) {return v1.x == v2.x && v1.y == v2.y;}
 
 typedef struct Rect {
     V2 topleft;
@@ -165,3 +169,16 @@ typedef struct Animation {
     f32* frameDurationsInMS;
     i32 frameCount;
 } Animation;
+
+typedef enum CollisionLineType {
+    CollisionLineType_BlockFromTop,
+    CollisionLineType_BlockFromBottom,
+    CollisionLineType_BlockFromLeft,
+    CollisionLineType_BlockFromRight,
+} CollisionLineType;
+
+typedef struct CollisionLine {
+    CollisionLineType type;
+    union {V2 left; V2 top;};
+    f32 len;
+} CollisionLine;

@@ -59,6 +59,7 @@ typedef struct Sprite {
     AnimationID animationID;
     i32 animationFrame;
     i32 currentAnimationCounterMS;
+    bool isGrounded;
 } Sprite;
 
 typedef struct SpriteRect {
@@ -78,6 +79,7 @@ typedef struct Game {
     struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
     f32 spriteScaleMultiplier;
     V2 cameraPos;
+    struct {i32 index, variant;} stage;
 } Game;
 
 static void drawGlyph(Game* game, char glyph, V2 topleft, V4 color) {
@@ -508,9 +510,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     {
         arrpush(game.sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
-        arrpush(game.sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
-        arrpush(game.sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
+        // arrpush(game.sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        // arrpush(game.sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
     }
+
+    // TODO(khvorov) Get from assets
+    CollisionLine tempCollisionLines[] = {
+        {.type = CollisionLineType_BlockFromTop, .left = {-100.0f, -40.0f}, .len = 20.0f},
+        {.type = CollisionLineType_BlockFromBottom, .left = {-100.0f, 40.0f}, .len = 20.0f},
+        {.type = CollisionLineType_BlockFromLeft, .top = {100.0f, 40.0f}, .len = 20.0f},
+        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 40.0f}, .len = 20.0f}
+    };
 
     drawStr(&game, STR("test"), (V2) {100, 300}, (V4) {.r = 100, .a = 100});
 
@@ -572,26 +582,85 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             msSinceLastUpdate = (f32)diff / (f32)performanceFrequencyPerSecond.QuadPart * 1000.0f;
         }
 
+        // NOTE(khvorov) Update
         {
-            f32 deltaX = 0.01f * msSinceLastUpdate;
+            f32 deltaX = 0.1f * msSinceLastUpdate;
+
             Sprite* sprite = game.sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
-            sprite->animationID = AnimationID_Commando_Idle;
-            if (input.keys[InputKeyID_Left].down) {
-                sprite->common.mirrorX = true;
-                sprite->common.topleft.x -= deltaX;
+
+            {
+                V2 currentPos = sprite->common.topleft;
+                V2 testPos = currentPos;
+
+                if (input.keys[InputKeyID_Left].down) {
+                    sprite->common.mirrorX = true;
+                    testPos.x -= deltaX;
+                }
+                if (input.keys[InputKeyID_Right].down) {
+                    sprite->common.mirrorX = false;
+                    testPos.x += deltaX;
+                }
+                if (input.keys[InputKeyID_Up].down) {
+                    testPos.y += deltaX;
+                }
+                if (input.keys[InputKeyID_Down].down) {
+                    testPos.y -= deltaX;
+                }
+
+                // TODO(khvorov) Handle grounding
+                // if (!sprite->isGrounded) {
+                //     testPos.y -= 0.1f * msSinceLastUpdate;
+                // }
+
+                f32 prop = 1.0f;
+
+                // TODO(khvorov) Make walls not sticky
+                // TODO(khvorov) Collide with more than just a point on a sprite
+                // TODO(khvorov) Draw on the sprite what the collision is against
+                // TODO(khvorov) Is there a better way to do line segment / line segment collision?
+
+                for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
+                    CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
+                    
+                    bool horizontal = collisionLine.type == CollisionLineType_BlockFromBottom || collisionLine.type == CollisionLineType_BlockFromTop;
+                    i32 relIndex = horizontal ? 1 : 0;
+                    f32 cur = ((f32*)&currentPos)[relIndex];
+                    f32 col = ((f32*)&collisionLine.left)[relIndex];
+                    f32 test = ((f32*)&testPos)[relIndex];
+
+                    f32 currentToLine = cur - col;
+                    f32 currentToTest = cur - test;
+                    f32 testProp = currentToLine / currentToTest;
+                    bool needToClip = collisionLine.type == CollisionLineType_BlockFromBottom || collisionLine.type == CollisionLineType_BlockFromLeft ? currentToTest < 0 : currentToTest > 0;
+
+                    if (needToClip && testProp >= 0 && testProp < prop) {
+                        i32 otherIndex = (relIndex + 1) % 2;
+                        f32 clippedPos = lerp(((f32*)&currentPos)[otherIndex], ((f32*)&testPos)[otherIndex], testProp);
+                        f32 otherCol = ((f32*)&collisionLine.left)[otherIndex];
+                        f32 colBound1 = otherCol;
+                        f32 colBound2 = otherCol + collisionLine.len;
+                        if (!horizontal) {
+                            colBound1 = otherCol - collisionLine.len;
+                            colBound2 = otherCol;
+                        }
+                        if (clippedPos >= colBound1 && clippedPos <= colBound2) {
+                            prop = testProp;
+                        }
+                    }
+                }
+
+                V2 newPos = v2lerp(currentPos, testPos, prop);
+                sprite->common.topleft = newPos;
+            }
+
+            if (input.keys[InputKeyID_Left].down) { sprite->common.mirrorX = true; }
+            if (input.keys[InputKeyID_Right].down) { sprite->common.mirrorX = false; }
+
+            if ((input.keys[InputKeyID_Left].down || input.keys[InputKeyID_Right].down) && sprite->isGrounded) {
                 sprite->animationID = AnimationID_Commando_Walk;
-            }
-            if (input.keys[InputKeyID_Right].down) {
-                sprite->common.mirrorX = false;
-                sprite->common.topleft.x += deltaX;
-                sprite->animationID = AnimationID_Commando_Walk;
-            }
-            if (input.keys[InputKeyID_Up].down) {
-                sprite->common.topleft.y += deltaX;
-            }
-            if (input.keys[InputKeyID_Down].down) {
-                sprite->common.topleft.y -= deltaX;
+            } else {
+                sprite->animationID = AnimationID_Commando_Idle;
             }
 
             {
@@ -604,22 +673,36 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 }
             }
 
-            // TODO(khvorov) How should strings behave when they are tied to in-game entities?
+            // TODO(khvorov) Special glyphs to draw as sprites
             {
                 game.screenRects.len = 0;
-                arrpush(game.screenRects, ((ScreenRect) {.scr = {{10, 20}, {4, 100}}, .texInAtlas = game.assets->atlas.locations[AtlasID_Whitepx].rect, .color = {.r = 1, .g = 1, .b = 0, .a = 1}}));
+                drawStr(&game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
 
-                {
-                    Sprite* sprite = game.sprites.ptr + 0;
-                    V2 scrTopleft = {};
-                    {
-                        V2 cameraSpace = v2sub(sprite->common.topleft, game.cameraPos);
-                        V2 pxFromCenter = v2scale(cameraSpace, game.spriteScaleMultiplier);
-                        pxFromCenter.y *= -1;
-                        V2 windowHalfDim = {window.w / 2, window.h / 2};
-                        scrTopleft = v2add(pxFromCenter, windowHalfDim);
+                // TODO(khvorov) Temp
+                for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
+                    CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
+
+                    // TODO(khvorov) Proc?
+                    V2 posCamera = v2sub(collisionLine.left, game.cameraPos);
+                    V2 posPxFromCenter = v2scale(posCamera, game.spriteScaleMultiplier);
+                    posPxFromCenter.y *= -1;
+                    V2 windowHalfDim = {window.w / 2, window.h / 2};
+                    V2 posScr = v2add(posPxFromCenter, windowHalfDim);
+                    f32 thickness = 5;
+                    V2 dim = (V2) {collisionLine.len * game.spriteScaleMultiplier, thickness};
+                    bool vertical = collisionLine.type == CollisionLineType_BlockFromLeft || collisionLine.type == CollisionLineType_BlockFromRight;
+                    if (vertical) {
+                        dim = (V2) {thickness, collisionLine.len * game.spriteScaleMultiplier};
                     }
-                    drawStr(&game, STR("spritestr"), scrTopleft, (V4) {.g = 100, .a = 100});
+
+                    // TODO(khvorov) All locations in the atlas have a transparent border around them. Should they?
+                    Rect whitePx = game.assets->atlas.locations[AtlasID_Whitepx].rect;
+                    whitePx.dim.x -= 2;
+                    whitePx.dim.y -= 2;
+                    whitePx.topleft.x += 1;
+                    whitePx.topleft.y += 1;
+                    ScreenRect collisionScr = {.scr = {posScr, dim}, .texInAtlas = whitePx, .color = {.r = 1, .g = 1, .b = 1, .a = 1}};
+                    arrpush(game.screenRects, collisionScr);
                 }
             }
         }
