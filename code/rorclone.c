@@ -98,6 +98,25 @@ static void drawStr(Game* game, Str str, V2 topleft, V4 color) {
     }
 }
 
+static V2 worldToScreenV2(V2 pos, Game* game, i32 windowW, i32 windowH) {
+    V2 posCamera = v2sub(pos, game->cameraPos);
+    V2 posPxFromCenter = v2scale(posCamera, game->spriteScaleMultiplier);
+    posPxFromCenter.y *= -1;
+    V2 windowHalfDim = {windowW / 2, windowH / 2};
+    V2 posScr = v2add(posPxFromCenter, windowHalfDim);
+    return posScr;
+}
+
+static Rect worldToScreenRect(Rect rect, Game* game, i32 windowW, i32 windowH) {
+    Rect result = {
+        .topleft = worldToScreenV2(rect.topleft, game, windowW, windowH),
+        .dim = v2scale(rect.dim, game->spriteScaleMultiplier),
+    };
+    return result;
+}
+
+#define worldToScreen(X, ...) _Generic((X), V2: worldToScreenV2, Rect: worldToScreenRect)(X, __VA_ARGS__)
+
 //
 // SECTION Platform
 //
@@ -246,13 +265,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         memory.scratch->size = size - memory.perm->size;
     }
 
-    Game game = {
+    Game game_ = {
         .screenRects.cap = 1024,
         .sprites.cap = 1024,
         .spriteScaleMultiplier = 4.4f,
     };
-    game.sprites.ptr = arenaAllocArray(memory.perm, Sprite, game.sprites.cap);
-    game.screenRects.ptr = arenaAllocArray(memory.perm, ScreenRect, game.screenRects.cap);
+    Game* game = &game_;
+    game->sprites.ptr = arenaAllocArray(memory.perm, Sprite, game->sprites.cap);
+    game->screenRects.ptr = arenaAllocArray(memory.perm, ScreenRect, game->screenRects.cap);
 
     // NOTE(khvorov) Assets
     tempMemoryBlock(memory.scratch) {
@@ -284,15 +304,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assert(GetFileSizeExResult);
         assert(fileSize.QuadPart == sizeof(AssetData));
 
-        game.assets = arenaAllocArray(memory.perm, AssetData, 1);
+        game->assets = arenaAllocArray(memory.perm, AssetData, 1);
         DWORD bytesRead = 0;
-        BOOL ReadFileResult = ReadFile(hfile, game.assets, fileSize.QuadPart, &bytesRead, 0);
+        BOOL ReadFileResult = ReadFile(hfile, game->assets, fileSize.QuadPart, &bytesRead, 0);
         assert(ReadFileResult);
         assert(bytesRead == fileSize.QuadPart);
 
         CloseHandle(hfile);
 
-        assetDataAfterLoad(game.assets);
+        assetDataAfterLoad(game->assets);
     }
 
     struct {
@@ -427,9 +447,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game.assets->shaders.elements[ShaderID_sprite_vs];
-        u8arr shaderps = game.assets->shaders.elements[ShaderID_sprite_ps];
-        d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game.sprites.cap);
+        u8arr shadervs = game->assets->shaders.elements[ShaderID_sprite_vs];
+        u8arr shaderps = game->assets->shaders.elements[ShaderID_sprite_ps];
+        d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game->sprites.cap);
     }
 
     {
@@ -440,13 +460,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game.assets->shaders.elements[ShaderID_screen_vs];
-        u8arr shaderps = game.assets->shaders.elements[ShaderID_screen_ps];
-        d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game.screenRects.cap);
+        u8arr shadervs = game->assets->shaders.elements[ShaderID_screen_vs];
+        u8arr shaderps = game->assets->shaders.elements[ShaderID_screen_ps];
+        d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game->screenRects.cap);
     }
 
     {
-        Texture atlas = { .pixels = game.assets->atlas.pixels, .w = game.assets->atlas.w, .h = game.assets->atlas.h};
+        Texture atlas = { .pixels = game->assets->atlas.pixels, .w = game->assets->atlas.w, .h = game->assets->atlas.h};
 
         D3D11_TEXTURE2D_DESC desc = {
             .Width = atlas.w,
@@ -509,9 +529,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
 
     {
-        arrpush(game.sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
-        // arrpush(game.sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
-        // arrpush(game.sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
+        arrpush(game->sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
+        // arrpush(game->sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        // arrpush(game->sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
     }
 
     // TODO(khvorov) Get from assets
@@ -521,8 +541,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         {.type = CollisionLineType_BlockFromLeft, .top = {100.0f, 40.0f}, .len = 20.0f},
         {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 40.0f}, .len = 20.0f}
     };
-
-    drawStr(&game, STR("test"), (V2) {100, 300}, (V4) {.r = 100, .a = 100});
 
     // TODO(khvorov) Killfocus message
     Input input = {};
@@ -584,7 +602,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         // NOTE(khvorov) Update
         {
-            Sprite* sprite = game.sprites.ptr;
+            Sprite* sprite = game->sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
 
             {
@@ -684,14 +702,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             if (input.keys[InputKeyID_Left].down) { sprite->common.mirrorX = true; }
             if (input.keys[InputKeyID_Right].down) { sprite->common.mirrorX = false; }
 
-            if ((input.keys[InputKeyID_Left].down || input.keys[InputKeyID_Right].down) && sprite->isGrounded) {
-                sprite->animationID = AnimationID_Commando_Walk;
+            if ((input.keys[InputKeyID_Left].down || input.keys[InputKeyID_Right].down)) {
+                sprite->animationID = AnimationID_Commando_Walk; // TODO(khvorov) Only when grounded
             } else {
                 sprite->animationID = AnimationID_Commando_Idle;
             }
 
             {
-                Animation* animation = (Animation*)game.assets->animations.elements + sprite->animationID;
+                Animation* animation = (Animation*)game->assets->animations.elements + sprite->animationID;
                 if (sprite->currentAnimationCounterMS >= animation->frameDurationsInMS[sprite->animationFrame]) {
                     sprite->animationFrame = (sprite->animationFrame + 1) % animation->frameCount;
                     sprite->currentAnimationCounterMS = 0;
@@ -702,34 +720,27 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             // TODO(khvorov) Special glyphs to draw as sprites
             {
-                game.screenRects.len = 0;
-                drawStr(&game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
+                game->screenRects.len = 0;
+                drawStr(game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
 
                 // TODO(khvorov) Temp
                 for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
                     CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
 
-                    // TODO(khvorov) Proc?
-                    V2 posCamera = v2sub(collisionLine.left, game.cameraPos);
-                    V2 posPxFromCenter = v2scale(posCamera, game.spriteScaleMultiplier);
-                    posPxFromCenter.y *= -1;
-                    V2 windowHalfDim = {window.w / 2, window.h / 2};
-                    V2 posScr = v2add(posPxFromCenter, windowHalfDim);
-                    f32 thickness = 5;
-                    V2 dim = (V2) {collisionLine.len * game.spriteScaleMultiplier, thickness};
+                    Rect collisionLineRectWorld = {.topleft = collisionLine.left};
+                    f32 thickness = 1;
+                    collisionLineRectWorld.dim = (V2) {collisionLine.len, thickness};
                     bool vertical = collisionLine.type == CollisionLineType_BlockFromLeft || collisionLine.type == CollisionLineType_BlockFromRight;
                     if (vertical) {
-                        dim = (V2) {thickness, collisionLine.len * game.spriteScaleMultiplier};
+                        collisionLineRectWorld.dim = (V2) {thickness, collisionLine.len};
                     }
 
+                    Rect collisionLineRectScr = worldToScreen(collisionLineRectWorld, game, window.w, window.h);
+
                     // TODO(khvorov) All locations in the atlas have a transparent border around them. Should they?
-                    Rect whitePx = game.assets->atlas.locations[AtlasID_Whitepx].rect;
-                    whitePx.dim.x -= 2;
-                    whitePx.dim.y -= 2;
-                    whitePx.topleft.x += 1;
-                    whitePx.topleft.y += 1;
-                    ScreenRect collisionScr = {.scr = {posScr, dim}, .texInAtlas = whitePx, .color = {.r = 1, .g = 1, .b = 1, .a = 1}};
-                    arrpush(game.screenRects, collisionScr);
+                    Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
+                    ScreenRect collisionScr = {.scr = collisionLineRectScr, .texInAtlas = whitePx, .color = {.r = 1, .g = 1, .b = 1, .a = 1}};
+                    arrpush(game->screenRects, collisionScr);
                 }
             }
         }
@@ -770,22 +781,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         }
 
         if (d3d11.rtView) {
-            d3d11CopyBuf(d3d11.context, d3d11.rects.screen.instanceBuf, game.screenRects.ptr, game.screenRects.len * sizeof(*game.screenRects.ptr));
-
             // NOTE(khvorov) Copy sprites
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
                 d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
                 SpriteRect* spriteRects = mapped.pData;
-                for (i64 spriteIndex = 0; spriteIndex < game.sprites.len; spriteIndex++) {
-                    Sprite* sprite = game.sprites.ptr + spriteIndex;
+                for (i64 spriteIndex = 0; spriteIndex < game->sprites.len; spriteIndex++) {
+                    Sprite* sprite = game->sprites.ptr + spriteIndex;
                     SpriteRect* spriteRect = spriteRects + spriteIndex;
                     spriteRect->common = sprite->common;
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
-                    spriteRect->texInAtlas = game.assets->atlas.locations[id];
+                    AtlasLocation atlasLoc = game->assets->atlas.locations[id];
+                    spriteRect->texInAtlas = atlasLoc;
+
+                    // TODO(khvorov) Temp code to draw offset
+                    Rect topleftRectWorld = {.topleft = sprite->common.topleft, .dim = v2fromf32(1)};
+                    Rect topleftRectScr = worldToScreen(topleftRectWorld, game, window.w, window.h);
+                    Rect offsetRectScr = rectTranslate(topleftRectScr, atlasLoc.offset);
+                    Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
+                    ScreenRect offsetScr = {.scr = offsetRectScr, .texInAtlas = whitePx, .color = {.r = 1, .g = 0, .b = 1, .a = 1}};
+                    arrpush(game->screenRects, offsetScr);
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
+
+            d3d11CopyBuf(d3d11.context, d3d11.rects.screen.instanceBuf, game->screenRects.ptr, game->screenRects.len * sizeof(*game->screenRects.ptr));
 
             // NOTE(khvorov) Set cbuffer
             {
@@ -793,9 +813,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
                 CBuffer* cbuf = (CBuffer*)mapped.pData;
                 cbuf->windowDim = (V2) {window.w, window.h};
-                cbuf->atlasDim = (V2) {game.assets->atlas.w, game.assets->atlas.h};
-                cbuf->cameraPos = game.cameraPos;
-                cbuf->spriteScaleMultiplier = game.spriteScaleMultiplier;
+                cbuf->atlasDim = (V2) {game->assets->atlas.w, game->assets->atlas.h};
+                cbuf->cameraPos = game->cameraPos;
+                cbuf->spriteScaleMultiplier = game->spriteScaleMultiplier;
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0);
             }
 
@@ -825,8 +845,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             ID3D11DeviceContext_PSSetSamplers(d3d11.context, 0, 1, &d3d11.sampler);
 
-            d3d11DrawRects(d3d11.context, d3d11.rects.sprite, sizeof(SpriteRect), game.sprites.len);
-            d3d11DrawRects(d3d11.context, d3d11.rects.screen, sizeof(*game.screenRects.ptr), game.screenRects.len);
+            d3d11DrawRects(d3d11.context, d3d11.rects.sprite, sizeof(SpriteRect), game->sprites.len);
+            d3d11DrawRects(d3d11.context, d3d11.rects.screen, sizeof(*game->screenRects.ptr), game->screenRects.len);
         }
 
         {

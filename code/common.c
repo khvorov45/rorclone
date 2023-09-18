@@ -142,9 +142,12 @@ static bool strstarts(Str str, Str start) {
 // SECTION Misc
 //
 
-static f32 lerp(f32 from, f32 to, f32 by) {return from * (1 - by) + to * by;}
+#define lerp(From, To, By) _Generic((From), f32: lerpf32, V2: v2lerp)(From, To, By)
+
+static f32 lerpf32(f32 from, f32 to, f32 by) {return from * (1 - by) + to * by;}
 
 typedef struct V2 { f32 x, y; } V2;
+static V2 v2fromf32(f32 x) {return (V2) {x, x};}
 static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
 static V2 v2scale(V2 v, f32 by) {return (V2) {.x = v.x * by, .y = v.y * by};}
@@ -153,10 +156,9 @@ static f32 v2dot(V2 v1, V2 v2) {return v1.x * v2.x + v1.y * v2.y;}
 static f32 v2outer(V2 v1, V2 v2) {return v1.x * v2.y - v1.y * v2.x;}
 static bool v2eq(V2 v1, V2 v2) {return v1.x == v2.x && v1.y == v2.y;}
 
-typedef struct Rect {
-    V2 topleft;
-    V2 dim;
-} Rect;
+typedef struct Rect {V2 topleft, dim;} Rect;
+static Rect rectShrink(Rect rect, f32 by) {return (Rect) {.topleft = v2add(rect.topleft, v2fromf32(by)), .dim = v2sub(rect.dim, v2fromf32(by * 2))};}
+static Rect rectTranslate(Rect rect, V2 by) {return (Rect) {.topleft = v2add(rect.topleft, by), .dim = rect.dim};}
 
 typedef struct AtlasLocation {
     Rect rect;
