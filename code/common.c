@@ -15,6 +15,7 @@
 #define STRINGIFY(x) STRINGIFY_(x)
 #define STR(x) ((Str){x, sizeof(x) - 1})
 #define LIT(x) (int)x.len, x.ptr
+#define absval(x) ((x) < 0 ? -(x) : x)
 #define unused(x) ((x) = (x))
 #define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
 #define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
@@ -148,6 +149,8 @@ static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
 static V2 v2scale(V2 v, f32 by) {return (V2) {.x = v.x * by, .y = v.y * by};}
 static V2 v2lerp(V2 v1, V2 v2, f32 by) {return (V2) {lerp(v1.x, v2.x, by), lerp(v1.y, v2.y, by)};}
+static f32 v2dot(V2 v1, V2 v2) {return v1.x * v2.x + v1.y * v2.y;}
+static f32 v2outer(V2 v1, V2 v2) {return v1.x * v2.y - v1.y * v2.x;}
 static bool v2eq(V2 v1, V2 v2) {return v1.x == v2.x && v1.y == v2.y;}
 
 typedef struct Rect {
@@ -175,6 +178,7 @@ typedef enum CollisionLineType {
     CollisionLineType_BlockFromBottom,
     CollisionLineType_BlockFromLeft,
     CollisionLineType_BlockFromRight,
+    CollisionLineType_Count,
 } CollisionLineType;
 
 typedef struct CollisionLine {

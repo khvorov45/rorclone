@@ -584,74 +584,101 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
         // NOTE(khvorov) Update
         {
-            f32 deltaX = 0.1f * msSinceLastUpdate;
-
             Sprite* sprite = game.sprites.ptr;
             assert(sprite->entity == EntityID_Commando);
 
             {
                 V2 currentPos = sprite->common.topleft;
-                V2 testPos = currentPos;
+                V2 deltaPos = {};
+                {
+                    f32 deltaX = 0.1f * msSinceLastUpdate;
+                    if (input.keys[InputKeyID_Left].down) {
+                        sprite->common.mirrorX = true;
+                        deltaPos.x -= deltaX;
+                    }
+                    if (input.keys[InputKeyID_Right].down) {
+                        sprite->common.mirrorX = false;
+                        deltaPos.x += deltaX;
+                    }
+                    if (input.keys[InputKeyID_Up].down) {
+                        deltaPos.y += deltaX;
+                    }
+                    if (input.keys[InputKeyID_Down].down) {
+                        deltaPos.y -= deltaX;
+                    }
+                }
 
-                if (input.keys[InputKeyID_Left].down) {
-                    sprite->common.mirrorX = true;
-                    testPos.x -= deltaX;
+                for (;;) {
+                    bool collided = false;
+                    f32 collisionProp = 1.0f;
+                    V2 collisionWallUnitV = {};
+
+                    for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
+                        CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
+                        V2 wallNormals[CollisionLineType_Count] = {
+                            [CollisionLineType_BlockFromTop] =    { 0,  1},
+                            [CollisionLineType_BlockFromBottom] = { 0, -1},
+                            [CollisionLineType_BlockFromLeft] =   {-1,  0},
+                            [CollisionLineType_BlockFromRight] =  { 1,  0},
+                        };
+                        V2 wallUnitVs[CollisionLineType_Count] = {
+                            [CollisionLineType_BlockFromTop] =    {1,  0},
+                            [CollisionLineType_BlockFromBottom] = {1,  0},
+                            [CollisionLineType_BlockFromLeft] =   {0, -1},
+                            [CollisionLineType_BlockFromRight] =  {0, -1},
+                        };
+                        V2 wallBound1 = collisionLine.left;
+                        V2 wallNormal = wallNormals[collisionLine.type];
+                        V2 wallUnitV = wallUnitVs[collisionLine.type];
+
+                        V2 currentToBound1 = v2sub(wallBound1, currentPos);
+                        f32 currentDotWallNormal = v2dot(currentToBound1, wallNormal);
+                        if (currentDotWallNormal <= 0) {
+                            V2 newPos = v2add(currentPos, deltaPos);
+                            V2 newToBound1 = v2sub(wallBound1, newPos);
+                            f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
+                            if (newDotWallNormal > 0) {
+                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len));
+                                V2 currentToBound2 = v2sub(wallBound2, currentPos);
+                                f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
+                                f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
+                                if (deltaOuterBound1 * deltaOuterBound2 <= 0) {
+                                    collided = true;
+                                    f32 currentDotWallNormalMag = absval(currentDotWallNormal);
+                                    f32 newDotWallNormalMag = absval(newDotWallNormal);
+                                    f32 thisCollisionProp = currentDotWallNormalMag / (currentDotWallNormalMag + newDotWallNormalMag);
+                                    if (thisCollisionProp < collisionProp) {
+                                        collisionProp = thisCollisionProp;
+                                        collisionWallUnitV = wallUnitV;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (collided) {
+                        assert(collisionProp >= 0 && collisionProp <= 1);
+                        V2 clippedDelta = v2scale(deltaPos, collisionProp);
+                        currentPos = v2add(currentPos, clippedDelta);
+                        V2 remainingDelta = v2scale(deltaPos, 1 - collisionProp);
+                        f32 remainingDeltaAlongWall = v2dot(remainingDelta, collisionWallUnitV);
+                        V2 remainingDeltaModded = v2scale(collisionWallUnitV, remainingDeltaAlongWall);
+                        deltaPos = remainingDeltaModded;
+                    } else {
+                        currentPos = v2add(currentPos, deltaPos);
+                        break;
+                    }
                 }
-                if (input.keys[InputKeyID_Right].down) {
-                    sprite->common.mirrorX = false;
-                    testPos.x += deltaX;
-                }
-                if (input.keys[InputKeyID_Up].down) {
-                    testPos.y += deltaX;
-                }
-                if (input.keys[InputKeyID_Down].down) {
-                    testPos.y -= deltaX;
-                }
+
+                sprite->common.topleft = currentPos;
 
                 // TODO(khvorov) Handle grounding
                 // if (!sprite->isGrounded) {
                 //     testPos.y -= 0.1f * msSinceLastUpdate;
                 // }
 
-                f32 prop = 1.0f;
-
-                // TODO(khvorov) Make walls not sticky
                 // TODO(khvorov) Collide with more than just a point on a sprite
                 // TODO(khvorov) Draw on the sprite what the collision is against
-                // TODO(khvorov) Is there a better way to do line segment / line segment collision?
-
-                for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
-                    CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
-                    
-                    bool horizontal = collisionLine.type == CollisionLineType_BlockFromBottom || collisionLine.type == CollisionLineType_BlockFromTop;
-                    i32 relIndex = horizontal ? 1 : 0;
-                    f32 cur = ((f32*)&currentPos)[relIndex];
-                    f32 col = ((f32*)&collisionLine.left)[relIndex];
-                    f32 test = ((f32*)&testPos)[relIndex];
-
-                    f32 currentToLine = cur - col;
-                    f32 currentToTest = cur - test;
-                    f32 testProp = currentToLine / currentToTest;
-                    bool needToClip = collisionLine.type == CollisionLineType_BlockFromBottom || collisionLine.type == CollisionLineType_BlockFromLeft ? currentToTest < 0 : currentToTest > 0;
-
-                    if (needToClip && testProp >= 0 && testProp < prop) {
-                        i32 otherIndex = (relIndex + 1) % 2;
-                        f32 clippedPos = lerp(((f32*)&currentPos)[otherIndex], ((f32*)&testPos)[otherIndex], testProp);
-                        f32 otherCol = ((f32*)&collisionLine.left)[otherIndex];
-                        f32 colBound1 = otherCol;
-                        f32 colBound2 = otherCol + collisionLine.len;
-                        if (!horizontal) {
-                            colBound1 = otherCol - collisionLine.len;
-                            colBound2 = otherCol;
-                        }
-                        if (clippedPos >= colBound1 && clippedPos <= colBound2) {
-                            prop = testProp;
-                        }
-                    }
-                }
-
-                V2 newPos = v2lerp(currentPos, testPos, prop);
-                sprite->common.topleft = newPos;
             }
 
             if (input.keys[InputKeyID_Left].down) { sprite->common.mirrorX = true; }
