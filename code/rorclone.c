@@ -11,6 +11,7 @@ typedef enum InputKeyID {
     InputKeyID_Right,
     InputKeyID_Up,
     InputKeyID_Down,
+    InputKeyID_Accelerate,
 
     InputKeyID_Count,
 } InputKeyID;
@@ -80,6 +81,7 @@ typedef struct Game {
     f32 spriteScaleMultiplier;
     V2 cameraPos;
     struct {i32 index, variant;} stage;
+    struct {i32 w, h;} window;
 } Game;
 
 static void drawGlyph(Game* game, char glyph, V2 topleft, V4 color) {
@@ -98,24 +100,31 @@ static void drawStr(Game* game, Str str, V2 topleft, V4 color) {
     }
 }
 
-static V2 worldToScreenV2(V2 pos, Game* game, i32 windowW, i32 windowH) {
-    V2 posCamera = v2sub(pos, game->cameraPos);
-    V2 posPxFromCenter = v2scale(posCamera, game->spriteScaleMultiplier);
+static V2 worldToScreenV2(V2 pos, V2 cameraPos, f32 spriteScaleMultiplier, i32 windowW, i32 windowH) {
+    V2 posCamera = v2sub(pos, cameraPos);
+    V2 posPxFromCenter = v2scale(posCamera, spriteScaleMultiplier);
     posPxFromCenter.y *= -1;
     V2 windowHalfDim = {windowW / 2, windowH / 2};
     V2 posScr = v2add(posPxFromCenter, windowHalfDim);
     return posScr;
 }
 
-static Rect worldToScreenRect(Rect rect, Game* game, i32 windowW, i32 windowH) {
+static Rect worldToScreenRect(Rect rect, V2 cameraPos, f32 spriteScaleMultiplier, i32 windowW, i32 windowH) {
     Rect result = {
-        .topleft = worldToScreenV2(rect.topleft, game, windowW, windowH),
-        .dim = v2scale(rect.dim, game->spriteScaleMultiplier),
+        .topleft = worldToScreenV2(rect.topleft, cameraPos, spriteScaleMultiplier, windowW, windowH),
+        .dim = v2scale(rect.dim, spriteScaleMultiplier),
     };
     return result;
 }
 
-#define worldToScreen(X, ...) _Generic((X), V2: worldToScreenV2, Rect: worldToScreenRect)(X, __VA_ARGS__)
+static void drawRect(Game* game, Rect rectWorld, V4 color) {
+    Rect topleftRectScr = worldToScreenRect(rectWorld, game->cameraPos, game->spriteScaleMultiplier, game->window.w, game->window.h);
+    // TODO(khvorov) All locations in the atlas have a transparent border around them. Should they?
+    Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
+    ScreenRect pointRect = {.scr = topleftRectScr, .texInAtlas = whitePx, .color = color};
+    arrpush(game->screenRects, pointRect);
+}
+static void drawPoint(Game* game, V2 posWorld, V4 color) { drawRect(game, (Rect) {posWorld, v2fromf32(1)}, color);}
 
 //
 // SECTION Platform
@@ -317,7 +326,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     struct {
         HWND hwnd;
-        DWORD w, h;
         WINDOWPLACEMENT wpPrev;
     } window = {.wpPrev = {.length = sizeof(WINDOWPLACEMENT)}};
 
@@ -538,11 +546,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     CollisionLine tempCollisionLines[] = {
         {.type = CollisionLineType_BlockFromTop, .left = {-100.0f, -40.0f}, .len = 20.0f},
         {.type = CollisionLineType_BlockFromBottom, .left = {-100.0f, 40.0f}, .len = 20.0f},
+        {.type = CollisionLineType_BlockFromBottom, .left = {0.0f, 40.0f}, .len = 20.0f},
         {.type = CollisionLineType_BlockFromLeft, .top = {100.0f, 40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 40.0f}, .len = 20.0f}
+        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 40.0f}, .len = 20.0f},
+        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 0.0f}, .len = 20.0f}
     };
 
-    // TODO(khvorov) Killfocus message
+    // TODO(khvorov) Should world space be bottom-up?
+
+    // TODO(khvorov) Killfocus message (Alt+Tab)
     Input input = {};
 
     LARGE_INTEGER performanceFrequencyPerSecond = {};
@@ -570,6 +582,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                         case VK_RIGHT: key = InputKeyID_Right; break;
                         case VK_UP:    key = InputKeyID_Up; break;
                         case VK_DOWN:  key = InputKeyID_Down; break;
+                        case VK_SHIFT: key = InputKeyID_Accelerate; break;
                     }
                     bool down = msg.message == WM_KEYDOWN;
                     input.keys[key].down = down;
@@ -607,23 +620,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             {
                 V2 currentPos = sprite->common.topleft;
+                V2 collisionDim = (V2) {3, 6}; // TODO(khvorov) Where should this live?
                 V2 deltaPos = {};
                 {
-                    f32 deltaX = 0.1f * msSinceLastUpdate;
-                    if (input.keys[InputKeyID_Left].down) {
-                        sprite->common.mirrorX = true;
-                        deltaPos.x -= deltaX;
-                    }
-                    if (input.keys[InputKeyID_Right].down) {
-                        sprite->common.mirrorX = false;
-                        deltaPos.x += deltaX;
-                    }
-                    if (input.keys[InputKeyID_Up].down) {
-                        deltaPos.y += deltaX;
-                    }
-                    if (input.keys[InputKeyID_Down].down) {
-                        deltaPos.y -= deltaX;
-                    }
+                    f32 deltaX = 0.01f * msSinceLastUpdate;
+                    if (input.keys[InputKeyID_Accelerate].down) { deltaX *= 10.0f;}
+                    if (input.keys[InputKeyID_Left].down) { deltaPos.x -= deltaX;}
+                    if (input.keys[InputKeyID_Right].down) {deltaPos.x += deltaX;}
+                    if (input.keys[InputKeyID_Up].down) {deltaPos.y += deltaX;}
+                    if (input.keys[InputKeyID_Down].down) {deltaPos.y -= deltaX;}
                 }
 
                 for (;;) {
@@ -645,7 +650,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             [CollisionLineType_BlockFromLeft] =   {0, -1},
                             [CollisionLineType_BlockFromRight] =  {0, -1},
                         };
-                        V2 wallBound1 = collisionLine.left;
+                        V2 wallShift[CollisionLineType_Count] = {
+                            [CollisionLineType_BlockFromTop] =    {-collisionDim.x, collisionDim.y},
+                            [CollisionLineType_BlockFromBottom] = {-collisionDim.x, 0},
+                            [CollisionLineType_BlockFromLeft] =   {-collisionDim.x, collisionDim.y},
+                            [CollisionLineType_BlockFromRight] =  {0, collisionDim.y},
+                        };
+                        V2 wallBound1 = v2add(collisionLine.left, wallShift[collisionLine.type]);
                         V2 wallNormal = wallNormals[collisionLine.type];
                         V2 wallUnitV = wallUnitVs[collisionLine.type];
 
@@ -656,7 +667,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             V2 newToBound1 = v2sub(wallBound1, newPos);
                             f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
                             if (newDotWallNormal > 0) {
-                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len));
+                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len + absval(v2dot(wallUnitV, collisionDim))));
                                 V2 currentToBound2 = v2sub(wallBound2, currentPos);
                                 f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
                                 f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
@@ -694,11 +705,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 // if (!sprite->isGrounded) {
                 //     testPos.y -= 0.1f * msSinceLastUpdate;
                 // }
-
-                // TODO(khvorov) Collide with more than just a point on a sprite
-                // TODO(khvorov) Draw on the sprite what the collision is against
             }
 
+            // TODO(khvorov) Collision does not handle mirroring well
             if (input.keys[InputKeyID_Left].down) { sprite->common.mirrorX = true; }
             if (input.keys[InputKeyID_Right].down) { sprite->common.mirrorX = false; }
 
@@ -723,7 +732,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 game->screenRects.len = 0;
                 drawStr(game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
 
-                // TODO(khvorov) Temp
+                // TODO(khvorov) Temp code to draw collision lines
                 for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
                     CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
 
@@ -735,12 +744,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                         collisionLineRectWorld.dim = (V2) {thickness, collisionLine.len};
                     }
 
-                    Rect collisionLineRectScr = worldToScreen(collisionLineRectWorld, game, window.w, window.h);
+                    if (collisionLine.type == CollisionLineType_BlockFromRight) {
+                        collisionLineRectWorld.topleft.x -= collisionLineRectWorld.dim.x;
+                    }
 
-                    // TODO(khvorov) All locations in the atlas have a transparent border around them. Should they?
-                    Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
-                    ScreenRect collisionScr = {.scr = collisionLineRectScr, .texInAtlas = whitePx, .color = {.r = 1, .g = 1, .b = 1, .a = 1}};
-                    arrpush(game->screenRects, collisionScr);
+                    if (collisionLine.type == CollisionLineType_BlockFromBottom) {
+                        collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
+                    }
+
+                    drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 1});
                 }
             }
         }
@@ -751,7 +763,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             DWORD windowWidth = rect.right - rect.left;
             DWORD windowHeight = rect.bottom - rect.top;
 
-            if (d3d11.rtView == NULL || windowWidth != window.w || windowHeight != window.h) {
+            if (d3d11.rtView == NULL || (i32)windowWidth != game->window.w || (i32)windowHeight != game->window.h) {
                 if (d3d11.rtView) {
                     ID3D11DeviceContext_ClearState(d3d11.context);
                     ID3D11RenderTargetView_Release(d3d11.rtView);
@@ -775,8 +787,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     ID3D11Texture2D_Release(backbuffer);
                 }
 
-                window.w = windowWidth;
-                window.h = windowHeight;
+                game->window.w = windowWidth;
+                game->window.h = windowHeight;
             }
         }
 
@@ -794,13 +806,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     AtlasLocation atlasLoc = game->assets->atlas.locations[id];
                     spriteRect->texInAtlas = atlasLoc;
 
-                    // TODO(khvorov) Temp code to draw offset
-                    Rect topleftRectWorld = {.topleft = sprite->common.topleft, .dim = v2fromf32(1)};
-                    Rect topleftRectScr = worldToScreen(topleftRectWorld, game, window.w, window.h);
-                    Rect offsetRectScr = rectTranslate(topleftRectScr, atlasLoc.offset);
-                    Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
-                    ScreenRect offsetScr = {.scr = offsetRectScr, .texInAtlas = whitePx, .color = {.r = 1, .g = 0, .b = 1, .a = 1}};
-                    arrpush(game->screenRects, offsetScr);
+                    // TODO(khvorov) Temp collision shape drawing
+                    drawRect(game, (Rect) {sprite->common.topleft, (V2) {3, 6}}, (V4) {.r = 1, .b = 1, .a = 1});
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
@@ -812,7 +819,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
                 d3d11.context->lpVtbl->Map(d3d11.context, (ID3D11Resource*)d3d11.cbuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
                 CBuffer* cbuf = (CBuffer*)mapped.pData;
-                cbuf->windowDim = (V2) {window.w, window.h};
+                cbuf->windowDim = (V2) {game->window.w, game->window.h};
                 cbuf->atlasDim = (V2) {game->assets->atlas.w, game->assets->atlas.h};
                 cbuf->cameraPos = game->cameraPos;
                 cbuf->spriteScaleMultiplier = game->spriteScaleMultiplier;
@@ -822,8 +829,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             D3D11_VIEWPORT viewport = {
                 .TopLeftX = 0,
                 .TopLeftY = 0,
-                .Width = (FLOAT)window.w,
-                .Height = (FLOAT)window.h,
+                .Width = (FLOAT)game->window.w,
+                .Height = (FLOAT)game->window.h,
                 .MinDepth = 0,
                 .MaxDepth = 1,
             };
