@@ -50,6 +50,8 @@ static AtlasID getAtlasID(EntityID entity, AnimationID animation, i32 animationF
 }
 
 typedef struct SpriteCommon {
+    // NOTE(khvorov) This is the visual top-left of the sprite in the first frame of any animation
+    // (first frames of all animations for a given sprite are aligned with each other)
     V2 topleft;
     i32 mirrorX;
 } SpriteCommon;
@@ -554,6 +556,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     // TODO(khvorov) Should world space be bottom-up?
 
+    // TODO(khvorov) Store in assets per-entity
+    V2 collisionOffset = {2, -3};
+    V2 collisionDim = (V2) {3, 6};
+
     // TODO(khvorov) Killfocus message (Alt+Tab)
     Input input = {};
 
@@ -619,8 +625,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             assert(sprite->entity == EntityID_Commando);
 
             {
-                V2 currentPos = sprite->common.topleft;
-                V2 collisionDim = (V2) {3, 6}; // TODO(khvorov) Where should this live?
+                V2 currentPos = v2add(sprite->common.topleft, collisionOffset);
                 V2 deltaPos = {};
                 {
                     f32 deltaX = 0.01f * msSinceLastUpdate;
@@ -699,7 +704,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     }
                 }
 
-                sprite->common.topleft = currentPos;
+                sprite->common.topleft = v2sub(currentPos, collisionOffset);
 
                 // TODO(khvorov) Handle grounding
                 // if (!sprite->isGrounded) {
@@ -807,7 +812,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     spriteRect->texInAtlas = atlasLoc;
 
                     // TODO(khvorov) Temp collision shape drawing
-                    drawRect(game, (Rect) {sprite->common.topleft, (V2) {3, 6}}, (V4) {.r = 1, .b = 1, .a = 1});
+                    drawRect(game, (Rect) {v2add(sprite->common.topleft, collisionOffset), collisionDim}, (V4) {.r = 1, .b = 1, .a = 1});
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }

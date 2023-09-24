@@ -32,9 +32,14 @@ PS_INPUT vs(VS_INPUT input) {
 
     float2 scrdim = input.texInAtlasDim * spriteScaleMultiplier;
     float2 wudim = input.texInAtlasDim;
-    float2 offsetForCenter = wudim / 2 - input.offset;
+    float2 halfWUDim = wudim / 2;
+    float2 offsetForCenter = halfWUDim - input.offset;
     offsetForCenter.y *= -1;
-    if (input.mirrorX) offsetForCenter.x *= -1;
+    if (input.mirrorX) {
+        float flipLineX = 3 + input.offset.x; // TODO(khvorov) Pass in
+        float centerToFlipline = halfWUDim.x - flipLineX;
+        offsetForCenter.x -= 2 * centerToFlipline;
+    }
 
     float2 offsetPos = input.topleft + offsetForCenter;
     float2 posInCamera = offsetPos - cameraPos;
