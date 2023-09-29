@@ -174,6 +174,17 @@ typedef struct AseFile {
 // SECTION Misc
 //
 
+typedef enum LayerTypeInfo {
+    LayerTypeInfo_None,
+    LayerTypeInfo_Collision,
+    LayerTypeInfo_Fliplines,
+} LayerTypeInfo;
+
+static V2 adjustRefpoint(V2 refpoint, V2 firstFrameArtOffset) {
+    V2 result = {refpoint.x - firstFrameArtOffset.x + 1, firstFrameArtOffset.y - refpoint.y - 1};
+    return result;
+}
+
 static char capitalize(char ch) {return ch - ('a' - 'A');}
 
 typedef struct StrBuilder {
@@ -528,7 +539,7 @@ int main() {
             u8arr fileContent = readEntireFile(arena, path);
 
             AseFile* ase = (AseFile*)fileContent.ptr;
-            assert(ase->magic == 0xA5E0);            
+            assert(ase->magic == 0xA5E0);
 
             Str filename = strslice(filefull, 0, filefull.len - (sizeof(".aseprite") - 1));
             bool isStage = strstarts(filename, STR("stage"));
@@ -738,11 +749,14 @@ int main() {
     struct {Animation* ptr; i32 len;} animations = {.len = fileInfosEntities.len};
     animations.ptr = arenaAllocArray(arena, Animation, animations.len);
 
-    struct {bool* ptr; i32 len, cap;} layerIsCollision = {.cap = 1024};
-    layerIsCollision.ptr = arenaAllocArray(arena, bool, layerIsCollision.cap);
+    struct {LayerTypeInfo* ptr; i32 len, cap;} layerTypeInfo = {.cap = 1024};
+    layerTypeInfo.ptr = arenaAllocArray(arena, LayerTypeInfo, layerTypeInfo.cap);
 
     struct {Rect* ptr; i32 len, cap;} collisionRects = {.cap = entityNamesDedup.len};
     collisionRects.ptr = arenaAllocArray(arena, Rect, collisionRects.cap);
+
+    struct {V2* ptr; i32 len, cap;} fliplinePositions = {.cap = entityNamesDedup.len};
+    fliplinePositions.ptr = arenaAllocArray(arena, V2, fliplinePositions.cap);
 
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosEntities.len; fileInfoIndex++) {
         FileInfoEntity* info = fileInfosEntities.ptr + fileInfoIndex;
@@ -755,13 +769,14 @@ int main() {
         animation->frameCount = ase->frameCount;
         animation->frameDurationsInMS = allAnimationDurations.ptr + allAnimationDurations.len;
 
-        layerIsCollision.len = 0;
+        layerTypeInfo.len = 0;
 
         for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
             assert(frame->magic == 0xF1FA);
             arrpush(allAnimationDurations, frame->frameDurationMS);
 
             bool foundCollision = false;
+            bool foundFliplines = false;
 
             AseChunk* chunk = frame->chunks;
             for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
@@ -776,38 +791,55 @@ int main() {
                         assert(chunk->layer.type == AseLayerType_Normal);
                         Str name = {chunk->layer.name.str, chunk->layer.name.len};
                         bool isCollision = streq(name, STR("collision"));
-                        arrpush(layerIsCollision, isCollision);
+                        bool isFliplines = streq(name, STR("fliplines"));
+                        if (isCollision) {
+                            arrpush(layerTypeInfo, LayerTypeInfo_Collision);
+                        } else if (isFliplines) {
+                            arrpush(layerTypeInfo, LayerTypeInfo_Fliplines);
+                        } else {
+                            arrpush(layerTypeInfo, LayerTypeInfo_None);
+                        }
                     } break;
 
                     case AseChunkType_Cel: {
-                        assert(chunk->cel.index < layerIsCollision.len);
-                        bool isCollision = layerIsCollision.ptr[chunk->cel.index];
-                        if (isCollision) {
-                            foundCollision = true;
-                            Rect collision = {{chunk->cel.posX, chunk->cel.posY}, {chunk->cel.width, chunk->cel.height}};
-                            arrpush(collisionRects, collision);
-                        } else {
-                            Texture texture = {};
-                            assert(chunk->cel.type == AseCelType_CompressedImage);
-                            u32 compressedDataSize = chunk->size - offsetof(AseChunk, cel.compressed);
-                            texture.w = chunk->cel.width;
-                            texture.h = chunk->cel.height;
-                            i32 pixelsInTex = texture.w * texture.h;
-                            texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
-                            i32 bytesInTex = pixelsInTex * sizeof(u32);
-                            int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
-                            assert(decodeResult == bytesInTex);
+                        assert(chunk->cel.index < layerTypeInfo.len);
+                        LayerTypeInfo thisLayerTypeInfo = layerTypeInfo.ptr[chunk->cel.index];
+                        switch (thisLayerTypeInfo) {
+                            case LayerTypeInfo_None: {
+                                Texture texture = {};
+                                assert(chunk->cel.type == AseCelType_CompressedImage);
+                                u32 compressedDataSize = chunk->size - offsetof(AseChunk, cel.compressed);
+                                texture.w = chunk->cel.width;
+                                texture.h = chunk->cel.height;
+                                i32 pixelsInTex = texture.w * texture.h;
+                                texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
+                                i32 bytesInTex = pixelsInTex * sizeof(u32);
+                                int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
+                                assert(decodeResult == bytesInTex);
 
-                            V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
-                            if (frameIndex == 0) {
-                                firstFrameArtOffset = artOffset;
-                            } else {
-                                AtlasLocation* thisLoc = atlasLocations + atlasTextures.len;
-                                V2 thisOffset = v2sub(firstFrameArtOffset, artOffset);
-                                thisLoc->offset = thisOffset; // TODO(khvorov) Do we ever need an offset that's not in the top-left?
-                            }
+                                V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
+                                if (frameIndex == 0) {
+                                    firstFrameArtOffset = artOffset;
+                                } else {
+                                    AtlasLocation* thisLoc = atlasLocations + atlasTextures.len;
+                                    V2 thisOffset = v2sub(firstFrameArtOffset, artOffset);
+                                    thisLoc->offset = thisOffset; // TODO(khvorov) Do we ever need an offset that's not in the top-left?
+                                }
 
-                            arrpush(atlasTextures, texture);
+                                arrpush(atlasTextures, texture);
+                            } break;
+
+                            case LayerTypeInfo_Collision: {
+                                foundCollision = true;
+                                Rect collision = {{chunk->cel.posX, chunk->cel.posY}, {chunk->cel.width, chunk->cel.height}};
+                                arrpush(collisionRects, collision);
+                            } break;
+
+                            case LayerTypeInfo_Fliplines: {
+                                foundFliplines = true;
+                                V2 fliplines = {chunk->cel.posX, chunk->cel.posY};
+                                arrpush(fliplinePositions, fliplines);
+                            } break;
                         }
                     } break;
 
@@ -825,8 +857,14 @@ int main() {
                 assert(frameIndex == 0);
                 assert(collisionRects.len > 0);
                 Rect* lastCollisionRect = collisionRects.ptr + collisionRects.len - 1;
-                lastCollisionRect->topleft.x = lastCollisionRect->topleft.x - firstFrameArtOffset.x + 1;
-                lastCollisionRect->topleft.y = firstFrameArtOffset.y - lastCollisionRect->topleft.y - 1;
+                lastCollisionRect->topleft = adjustRefpoint(lastCollisionRect->topleft, firstFrameArtOffset);
+            }
+
+            if (foundFliplines) {
+                assert(frameIndex == 0);
+                assert(fliplinePositions.len > 0);
+                V2* lastFlipline = fliplinePositions.ptr + fliplinePositions.len - 1;
+                *lastFlipline = adjustRefpoint(*lastFlipline, firstFrameArtOffset);
             }
 
             frame = (AseFrame*)chunk;
@@ -835,6 +873,7 @@ int main() {
 
     assert(atlasTextures.len == atlasTextures.cap);
     assert(collisionRects.len == collisionRects.cap);
+    assert(fliplinePositions.len == fliplinePositions.cap);
 
     Texture atlas = {};
     {
@@ -933,10 +972,10 @@ int main() {
     assetAddField(datab, "int glyphW", font.glyphW);
     assetEndStruct(datab, STR("font"));
 
+    // TODO(khvorov) Should fliplines just be halfway through the collision shape?
     assetBeginStruct(datab);
-    V2 tempFliplines[] = {{3, 0}, {}}; // TODO(khvorov) Pull from art
     assetAddArrField(datab, "Rect collision", collisionRects.ptr, collisionRects.len);
-    assetAddArrField(datab, "V2 fliplines", tempFliplines, arrayCount(tempFliplines));
+    assetAddArrField(datab, "V2 fliplines", fliplinePositions.ptr, fliplinePositions.len);
     assetEndStruct(datab, STR("entities"));
 
     assetBeginStruct(datab);
