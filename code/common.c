@@ -11,6 +11,10 @@
 #define Megabyte 1024 * Kilobyte
 #define Gigabyte 1024 * Megabyte
 
+#ifndef assert
+#define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
+#endif
+
 #define STRINGIFY_(x) #x
 #define STRINGIFY(x) STRINGIFY_(x)
 #define STR(x) ((Str){x, sizeof(x) - 1})
@@ -23,10 +27,6 @@
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
 #define arenaAllocAndZeroArray(arena, type, count) ((type*)arenaAllocAndZero((arena), sizeof(type) * (count)))
 #define tempMemoryBlock(arena_) for (TempMemory _temp_ = beginTempMemory(arena_); _temp_.arena; endTempMemory(&_temp_))
-
-#ifndef assert
-#define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
-#endif
 
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_IMPLEMENTATION

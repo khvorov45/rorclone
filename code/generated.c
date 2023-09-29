@@ -49,6 +49,10 @@ typedef struct AssetData {
         int glyphW;
     } font;
     struct {
+        Rect collision[2];
+        V2 fliplines[2];
+    } entities;
+    struct {
         int w;
         int h;
         unsigned int pixels[23940];

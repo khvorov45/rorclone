@@ -558,11 +558,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
     // TODO(khvorov) Should world space be bottom-up?
 
-    // TODO(khvorov) Store in assets per-entity
-    V2 collisionOffset = {2, -3};
-    V2 collisionDim = (V2) {3, 6};
-    V2 fliplines = (V2) {3, 0};
-
     // TODO(khvorov) Killfocus message (Alt+Tab)
     Input input = {};
 
@@ -628,7 +623,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             assert(sprite->entity == EntityID_Commando);
 
             {
-                V2 currentPos = v2add(sprite->common.topleft, collisionOffset);
+                Rect collision = game->assets->entities.collision[sprite->entity];
+                V2 currentPos = v2add(sprite->common.topleft, collision.topleft);
                 V2 deltaPos = {};
                 {
                     f32 deltaX = 0.01f * msSinceLastUpdate;
@@ -659,10 +655,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             [CollisionLineType_BlockFromRight] =  {0, -1},
                         };
                         V2 wallShift[CollisionLineType_Count] = {
-                            [CollisionLineType_BlockFromTop] =    {-collisionDim.x, collisionDim.y},
-                            [CollisionLineType_BlockFromBottom] = {-collisionDim.x, 0},
-                            [CollisionLineType_BlockFromLeft] =   {-collisionDim.x, collisionDim.y},
-                            [CollisionLineType_BlockFromRight] =  {0, collisionDim.y},
+                            [CollisionLineType_BlockFromTop] =    {-collision.dim.x, collision.dim.y},
+                            [CollisionLineType_BlockFromBottom] = {-collision.dim.x, 0},
+                            [CollisionLineType_BlockFromLeft] =   {-collision.dim.x, collision.dim.y},
+                            [CollisionLineType_BlockFromRight] =  {0, collision.dim.y},
                         };
                         V2 wallBound1 = v2add(collisionLine.left, wallShift[collisionLine.type]);
                         V2 wallNormal = wallNormals[collisionLine.type];
@@ -675,7 +671,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             V2 newToBound1 = v2sub(wallBound1, newPos);
                             f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
                             if (newDotWallNormal > 0) {
-                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len + absval(v2dot(wallUnitV, collisionDim))));
+                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len + absval(v2dot(wallUnitV, collision.dim))));
                                 V2 currentToBound2 = v2sub(wallBound2, currentPos);
                                 f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
                                 f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
@@ -707,7 +703,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     }
                 }
 
-                sprite->common.topleft = v2sub(currentPos, collisionOffset);
+                sprite->common.topleft = v2sub(currentPos, collision.topleft);
 
                 // TODO(khvorov) Handle grounding
                 // if (!sprite->isGrounded) {
@@ -813,10 +809,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
                     AtlasLocation atlasLoc = game->assets->atlas.locations[id];
                     spriteRect->texInAtlas = atlasLoc;
-                    spriteRect->fliplines = fliplines;
+                    spriteRect->fliplines = game->assets->entities.fliplines[sprite->entity];
 
                     // TODO(khvorov) Temp collision shape drawing
-                    drawRect(game, (Rect) {v2add(sprite->common.topleft, collisionOffset), collisionDim}, (V4) {.r = 1, .b = 1, .a = 1});
+                    Rect collision = game->assets->entities.collision[sprite->entity];
+                    drawRect(game, (Rect) {v2add(sprite->common.topleft, collision.topleft), collision.dim}, (V4) {.r = 1, .b = 1, .a = 0.25});
                 }
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
