@@ -5,6 +5,7 @@ struct VS_INPUT {
     float2 texInAtlasTopleft : TEX_POS;
     float2 texInAtlasDim : TEX_DIM;
     float2 offset : OFFSET;
+    float2 fliplines : FLIPLINES;
 };
 
 struct PS_INPUT {
@@ -36,7 +37,7 @@ PS_INPUT vs(VS_INPUT input) {
     float2 offsetForCenter = halfWUDim - input.offset;
     offsetForCenter.y *= -1;
     if (input.mirrorX) {
-        float flipLineX = 3 + input.offset.x; // TODO(khvorov) Pass in
+        float flipLineX = input.fliplines.x + input.offset.x;
         float centerToFlipline = halfWUDim.x - flipLineX;
         offsetForCenter.x -= 2 * centerToFlipline;
     }

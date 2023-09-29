@@ -68,6 +68,7 @@ typedef struct Sprite {
 typedef struct SpriteRect {
     SpriteCommon common;
     AtlasLocation texInAtlas;
+    V2 fliplines;
 } SpriteRect;
 
 typedef struct ScreenRect {
@@ -456,6 +457,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.topleft), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.rect.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+            {"FLIPLINES", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, fliplines), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
         u8arr shadervs = game->assets->shaders.elements[ShaderID_sprite_vs];
         u8arr shaderps = game->assets->shaders.elements[ShaderID_sprite_ps];
@@ -559,6 +561,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     // TODO(khvorov) Store in assets per-entity
     V2 collisionOffset = {2, -3};
     V2 collisionDim = (V2) {3, 6};
+    V2 fliplines = (V2) {3, 0};
 
     // TODO(khvorov) Killfocus message (Alt+Tab)
     Input input = {};
@@ -810,6 +813,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
                     AtlasLocation atlasLoc = game->assets->atlas.locations[id];
                     spriteRect->texInAtlas = atlasLoc;
+                    spriteRect->fliplines = fliplines;
 
                     // TODO(khvorov) Temp collision shape drawing
                     drawRect(game, (Rect) {v2add(sprite->common.topleft, collisionOffset), collisionDim}, (V4) {.r = 1, .b = 1, .a = 1});

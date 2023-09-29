@@ -59,7 +59,7 @@ typedef struct AssetData {
         f32arr elements[3];
     } animations;
     struct {
-        u8 allData[95520];
+        u8 allData[95548];
         u8arr elements[4];
     } shaders;
 } AssetData;
