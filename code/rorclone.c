@@ -546,14 +546,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         // arrpush(game->sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
     }
 
+    // TODO(khvorov) Go back to point/len/kind spec?
     // TODO(khvorov) Get from assets
     CollisionLine tempCollisionLines[] = {
-        {.type = CollisionLineType_BlockFromTop, .left = {-100.0f, -40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromBottom, .left = {-100.0f, 40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromBottom, .left = {0.0f, 40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromLeft, .top = {100.0f, 40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 40.0f}, .len = 20.0f},
-        {.type = CollisionLineType_BlockFromRight, .top = {-100.0f, 0.0f}, .len = 20.0f}
+        {.p1 = {100.0f, -40.0f}, .p2 = {100.0f, 40.0f}},
+        {.p1 = {-100.0f, 40.0f}, .p2 = {-100.0f, -40.0f}},
+        {.p1 = {-40.0f, -100.0f}, .p2 = {40.0f, -100.0f}},
+        {.p1 = {40.0f, 100.0f}, .p2 = {-40.0f, 100.0f}},
     };
 
     // TODO(khvorov) Should world space be bottom-up?
@@ -624,7 +623,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             {
                 Rect collision = game->assets->entities.collision[sprite->entity];
-                V2 currentPos = v2add(sprite->common.topleft, collision.topleft);
+                V2 currentPos = v2add(sprite->common.topleft, collision.topleft); // TODO(khvorov) Is collision offset bottom-up or top-down?
+                currentPos.y -= collision.dim.y;
                 V2 deltaPos = {};
                 {
                     f32 deltaX = 0.01f * msSinceLastUpdate;
@@ -640,29 +640,26 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     f32 collisionProp = 1.0f;
                     V2 collisionWallUnitV = {};
 
+                    // TODO(khvorov) Too many special conditions/branches. There is probably a way to simplify this
+
                     for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
                         CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
-                        V2 wallNormals[CollisionLineType_Count] = {
-                            [CollisionLineType_BlockFromTop] =    { 0,  1},
-                            [CollisionLineType_BlockFromBottom] = { 0, -1},
-                            [CollisionLineType_BlockFromLeft] =   {-1,  0},
-                            [CollisionLineType_BlockFromRight] =  { 1,  0},
-                        };
-                        V2 wallUnitVs[CollisionLineType_Count] = {
-                            [CollisionLineType_BlockFromTop] =    {1,  0},
-                            [CollisionLineType_BlockFromBottom] = {1,  0},
-                            [CollisionLineType_BlockFromLeft] =   {0, -1},
-                            [CollisionLineType_BlockFromRight] =  {0, -1},
-                        };
-                        V2 wallShift[CollisionLineType_Count] = {
-                            [CollisionLineType_BlockFromTop] =    {-collision.dim.x, collision.dim.y},
-                            [CollisionLineType_BlockFromBottom] = {-collision.dim.x, 0},
-                            [CollisionLineType_BlockFromLeft] =   {-collision.dim.x, collision.dim.y},
-                            [CollisionLineType_BlockFromRight] =  {0, collision.dim.y},
-                        };
-                        V2 wallBound1 = v2add(collisionLine.left, wallShift[collisionLine.type]);
-                        V2 wallNormal = wallNormals[collisionLine.type];
-                        V2 wallUnitV = wallUnitVs[collisionLine.type];
+
+                        V2 wallVector = v2sub(collisionLine.p2, collisionLine.p1);
+                        V2 wallUnitV = v2normalize(wallVector);
+                        V2 wallNormal = v2xyquaterturn(wallUnitV);
+
+                        f32 wallShift = v2dot(wallNormal, collision.dim);
+                        f32 wallShiftClamped = min(wallShift, 0);
+                        V2 wallShiftV = v2scale(wallNormal, absval(wallShiftClamped));
+
+                        V2 wallBound1 = v2add(collisionLine.p1, wallShiftV);
+                        V2 wallBound2 = v2add(collisionLine.p2, wallShiftV);
+
+                        f32 wallExt = v2dot(wallUnitV, collision.dim);
+                        V2 wallExtV = v2scale(wallUnitV, wallExt);
+                        if (wallExt > 0) {wallBound1 = v2sub(wallBound1, wallExtV);}
+                        else             {wallBound2 = v2sub(wallBound2, wallExtV);}
 
                         V2 currentToBound1 = v2sub(wallBound1, currentPos);
                         f32 currentDotWallNormal = v2dot(currentToBound1, wallNormal);
@@ -671,7 +668,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                             V2 newToBound1 = v2sub(wallBound1, newPos);
                             f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
                             if (newDotWallNormal > 0) {
-                                V2 wallBound2 = v2add(wallBound1, v2scale(wallUnitV, collisionLine.len + absval(v2dot(wallUnitV, collision.dim))));
                                 V2 currentToBound2 = v2sub(wallBound2, currentPos);
                                 f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
                                 f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
@@ -703,6 +699,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     }
                 }
 
+                currentPos.y += collision.dim.y;
                 sprite->common.topleft = v2sub(currentPos, collision.topleft);
 
                 // TODO(khvorov) Handle grounding
@@ -739,21 +736,23 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
                     CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
 
-                    Rect collisionLineRectWorld = {.topleft = collisionLine.left};
+                    Rect collisionLineRectWorld = {.topleft = (collisionLine.p1.x < collisionLine.p2.x) || (collisionLine.p1.y > collisionLine.p2.y) ? collisionLine.p1 : collisionLine.p2};
                     f32 thickness = 1;
-                    collisionLineRectWorld.dim = (V2) {collisionLine.len, thickness};
-                    bool vertical = collisionLine.type == CollisionLineType_BlockFromLeft || collisionLine.type == CollisionLineType_BlockFromRight;
+                    collisionLineRectWorld.dim = (V2) {v2len(v2sub(collisionLine.p2, collisionLine.p1)), thickness};
+                    bool vertical = collisionLine.p1.x == collisionLine.p2.x;
                     if (vertical) {
-                        collisionLineRectWorld.dim = (V2) {thickness, collisionLine.len};
+                        collisionLineRectWorld.dim.y = collisionLineRectWorld.dim.x;
+                        collisionLineRectWorld.dim.x = thickness;
                     }
 
-                    if (collisionLine.type == CollisionLineType_BlockFromRight) {
-                        collisionLineRectWorld.topleft.x -= collisionLineRectWorld.dim.x;
-                    }
+                    // TODO(khvorov) Reenable
+                    // if (collisionLine.type == CollisionLineType_BlockFromRight) {
+                    //     collisionLineRectWorld.topleft.x -= collisionLineRectWorld.dim.x;
+                    // }
 
-                    if (collisionLine.type == CollisionLineType_BlockFromBottom) {
-                        collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
-                    }
+                    // if (collisionLine.type == CollisionLineType_BlockFromBottom) {
+                    //     collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
+                    // }
 
                     drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 1});
                 }

@@ -6,6 +6,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include <immintrin.h>
+
 #define Byte 1
 #define Kilobyte 1024 * Byte
 #define Megabyte 1024 * Kilobyte
@@ -145,6 +147,14 @@ static bool strstarts(Str str, Str start) {
 #define lerp(From, To, By) _Generic((From), f32: lerpf32, V2: v2lerp)(From, To, By)
 
 static f32 lerpf32(f32 from, f32 to, f32 by) {return from * (1 - by) + to * by;}
+static f32 square(f32 x) {return x * x;}
+
+static f32 squareRoot(f32 x) {
+    __m128 x128 = _mm_set1_ps(x);
+    __m128 result128 = _mm_sqrt_ss(x128);
+    f32 result = _mm_cvtss_f32(result128);
+    return result;
+}
 
 typedef struct V2 { f32 x, y; } V2;
 static V2 v2fromf32(f32 x) {return (V2) {x, x};}
@@ -155,6 +165,9 @@ static V2 v2lerp(V2 v1, V2 v2, f32 by) {return (V2) {lerp(v1.x, v2.x, by), lerp(
 static f32 v2dot(V2 v1, V2 v2) {return v1.x * v2.x + v1.y * v2.y;}
 static f32 v2outer(V2 v1, V2 v2) {return v1.x * v2.y - v1.y * v2.x;}
 static bool v2eq(V2 v1, V2 v2) {return v1.x == v2.x && v1.y == v2.y;}
+static f32 v2len(V2 v) {return squareRoot(square(v.x) + square(v.y));}
+static V2 v2normalize(V2 v) {return v2scale(v, 1 / v2len(v));}
+static V2 v2xyquaterturn(V2 v) {return (V2) {-v.y, v.x};}
 
 typedef struct Rect {V2 topleft, dim;} Rect;
 static Rect rectShrink(Rect rect, f32 by) {return (Rect) {.topleft = v2add(rect.topleft, v2fromf32(by)), .dim = v2sub(rect.dim, v2fromf32(by * 2))};}
@@ -175,16 +188,6 @@ typedef struct Animation {
     i32 frameCount;
 } Animation;
 
-typedef enum CollisionLineType {
-    CollisionLineType_BlockFromTop,
-    CollisionLineType_BlockFromBottom,
-    CollisionLineType_BlockFromLeft,
-    CollisionLineType_BlockFromRight,
-    CollisionLineType_Count,
-} CollisionLineType;
-
 typedef struct CollisionLine {
-    CollisionLineType type;
-    union {V2 left; V2 top;};
-    f32 len;
+    V2 p1, p2;
 } CollisionLine;
