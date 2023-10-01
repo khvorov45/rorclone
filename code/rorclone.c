@@ -711,7 +711,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 // }
             }
 
-            // TODO(khvorov) Collision does not handle mirroring well
             if (input.keys[InputKeyID_Left].down) { sprite->common.mirrorX = true; }
             if (input.keys[InputKeyID_Right].down) { sprite->common.mirrorX = false; }
 
@@ -809,7 +808,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     AtlasID id = getAtlasID(sprite->entity, sprite->animationID, sprite->animationFrame);
                     AtlasLocation atlasLoc = game->assets->atlas.locations[id];
                     spriteRect->texInAtlas = atlasLoc;
-                    spriteRect->fliplines = game->assets->entities.fliplines[sprite->entity];
+                    Rect collisionRect = game->assets->entities.collision[sprite->entity];
+                    spriteRect->fliplines = v2add(collisionRect.topleft, v2scale(collisionRect.dim, 0.5f));
 
                     // TODO(khvorov) Temp collision shape drawing
                     Rect collision = game->assets->entities.collision[sprite->entity];

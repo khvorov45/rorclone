@@ -50,7 +50,6 @@ typedef struct AssetData {
     } font;
     struct {
         Rect collision[2];
-        V2 fliplines[2];
     } entities;
     struct {
         int w;

@@ -177,7 +177,6 @@ typedef struct AseFile {
 typedef enum LayerTypeInfo {
     LayerTypeInfo_None,
     LayerTypeInfo_Collision,
-    LayerTypeInfo_Fliplines,
 } LayerTypeInfo;
 
 static V2 adjustRefpoint(V2 refpoint, V2 firstFrameArtOffset) {
@@ -755,9 +754,6 @@ int main() {
     struct {Rect* ptr; i32 len, cap;} collisionRects = {.cap = entityNamesDedup.len};
     collisionRects.ptr = arenaAllocArray(arena, Rect, collisionRects.cap);
 
-    struct {V2* ptr; i32 len, cap;} fliplinePositions = {.cap = entityNamesDedup.len};
-    fliplinePositions.ptr = arenaAllocArray(arena, V2, fliplinePositions.cap);
-
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosEntities.len; fileInfoIndex++) {
         FileInfoEntity* info = fileInfosEntities.ptr + fileInfoIndex;
         AseFile* ase = info->content;
@@ -776,7 +772,6 @@ int main() {
             arrpush(allAnimationDurations, frame->frameDurationMS);
 
             bool foundCollision = false;
-            bool foundFliplines = false;
 
             AseChunk* chunk = frame->chunks;
             for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
@@ -791,11 +786,8 @@ int main() {
                         assert(chunk->layer.type == AseLayerType_Normal);
                         Str name = {chunk->layer.name.str, chunk->layer.name.len};
                         bool isCollision = streq(name, STR("collision"));
-                        bool isFliplines = streq(name, STR("fliplines"));
                         if (isCollision) {
                             arrpush(layerTypeInfo, LayerTypeInfo_Collision);
-                        } else if (isFliplines) {
-                            arrpush(layerTypeInfo, LayerTypeInfo_Fliplines);
                         } else {
                             arrpush(layerTypeInfo, LayerTypeInfo_None);
                         }
@@ -834,12 +826,6 @@ int main() {
                                 Rect collision = {{chunk->cel.posX, chunk->cel.posY}, {chunk->cel.width, chunk->cel.height}};
                                 arrpush(collisionRects, collision);
                             } break;
-
-                            case LayerTypeInfo_Fliplines: {
-                                foundFliplines = true;
-                                V2 fliplines = {chunk->cel.posX, chunk->cel.posY};
-                                arrpush(fliplinePositions, fliplines);
-                            } break;
                         }
                     } break;
 
@@ -860,20 +846,12 @@ int main() {
                 lastCollisionRect->topleft = adjustRefpoint(lastCollisionRect->topleft, firstFrameArtOffset);
             }
 
-            if (foundFliplines) {
-                assert(frameIndex == 0);
-                assert(fliplinePositions.len > 0);
-                V2* lastFlipline = fliplinePositions.ptr + fliplinePositions.len - 1;
-                *lastFlipline = adjustRefpoint(*lastFlipline, firstFrameArtOffset);
-            }
-
             frame = (AseFrame*)chunk;
         }
     }
 
     assert(atlasTextures.len == atlasTextures.cap);
     assert(collisionRects.len == collisionRects.cap);
-    assert(fliplinePositions.len == fliplinePositions.cap);
 
     Texture atlas = {};
     {
@@ -972,10 +950,8 @@ int main() {
     assetAddField(datab, "int glyphW", font.glyphW);
     assetEndStruct(datab, STR("font"));
 
-    // TODO(khvorov) Should fliplines just be halfway through the collision shape?
     assetBeginStruct(datab);
     assetAddArrField(datab, "Rect collision", collisionRects.ptr, collisionRects.len);
-    assetAddArrField(datab, "V2 fliplines", fliplinePositions.ptr, fliplinePositions.len);
     assetEndStruct(datab, STR("entities"));
 
     assetBeginStruct(datab);
