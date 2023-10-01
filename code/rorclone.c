@@ -623,7 +623,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
             {
                 Rect collision = game->assets->entities.collision[sprite->entity];
-                V2 currentPos = v2add(sprite->common.topleft, collision.topleft); // TODO(khvorov) Is collision offset bottom-up or top-down?
+                V2 currentPos = v2add(sprite->common.topleft, collision.topleft);
                 currentPos.y -= collision.dim.y;
                 V2 deltaPos = {};
                 {
