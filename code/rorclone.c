@@ -546,15 +546,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         // arrpush(game->sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
     }
 
-    // TODO(khvorov) Go back to point/len/kind spec?
-    // TODO(khvorov) Get from assets
-    CollisionLine tempCollisionLines[] = {
-        {.p1 = {100.0f, -40.0f}, .p2 = {100.0f, 40.0f}},
-        {.p1 = {-100.0f, 40.0f}, .p2 = {-100.0f, -40.0f}},
-        {.p1 = {-40.0f, -100.0f}, .p2 = {40.0f, -100.0f}},
-        {.p1 = {40.0f, 100.0f}, .p2 = {-40.0f, 100.0f}},
-    };
-
     // TODO(khvorov) Should world space be bottom-up?
 
     // TODO(khvorov) Killfocus message (Alt+Tab)
@@ -640,8 +631,14 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     f32 collisionProp = 1.0f;
                     V2 collisionWallUnitV = {};
 
-                    for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
-                        CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
+                    // TODO(khvorov) Get colllision polygons from the correct stage
+                    V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
+
+                    // TODO(khvorov) Go through all the polygons
+                    V2arr collisionPolygon = stageCollisionPolygons.ptr[0];
+
+                    for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
+                        CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 
                         V2 wallVector = v2sub(collisionLine.p2, collisionLine.p1);
                         V2 wallUnitV = v2normalize(wallVector);
@@ -733,8 +730,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 drawStr(game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
 
                 // TODO(khvorov) Temp code to draw collision lines
-                for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
-                    CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
+                V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
+                V2arr collisionPolygon = stageCollisionPolygons.ptr[0];
+                for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
+                    CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 
                     Rect collisionLineRectWorld = {.topleft = (collisionLine.p1.x < collisionLine.p2.x) || (collisionLine.p1.y > collisionLine.p2.y) ? collisionLine.p1 : collisionLine.p2};
                     f32 thickness = 1;

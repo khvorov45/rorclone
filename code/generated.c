@@ -65,10 +65,17 @@ typedef struct AssetData {
         u8 allData[95548];
         u8arr elements[4];
     } shaders;
+    struct {
+        V2 allData[4];
+        V2arr midData[1];
+        V2arrarr elements[1];
+    } stages;
 } AssetData;
 #pragma pack(pop)
 
 static void assetDataAfterLoad(AssetData* adata) {
     for (u32 ind = 0; ind < 3; ind++) {adata->animations.elements[ind].ptr = adata->animations.allData + (u64)adata->animations.elements[ind].ptr;}
     for (u32 ind = 0; ind < 4; ind++) {adata->shaders.elements[ind].ptr = adata->shaders.allData + (u64)adata->shaders.elements[ind].ptr;}
+    for (u32 ind = 0; ind < 1; ind++) {adata->stages.elements[ind].ptr = adata->stages.midData + (u64)adata->stages.elements[ind].ptr;}
+    for (u32 ind = 0; ind < 1; ind++) {adata->stages.midData[ind].ptr = adata->stages.allData + (u64)adata->stages.midData[ind].ptr;}
 }

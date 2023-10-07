@@ -157,6 +157,8 @@ static f32 squareRoot(f32 x) {
 }
 
 typedef struct V2 { f32 x, y; } V2;
+typedef struct V2arr {V2* ptr; i64 len;} V2arr;
+typedef struct V2arrarr {V2arr* ptr; i64 len;} V2arrarr;
 static V2 v2fromf32(f32 x) {return (V2) {x, x};}
 static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}

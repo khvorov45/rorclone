@@ -253,7 +253,9 @@ static void binWrite_(BinBuilder* bin, void* ptr, i64 len) {
 }
 
 typedef struct PtrFix {
-    Str elementName;
+    Str arrName;
+    Str elName;
+    Str elParentName;
     i32 len;
 } PtrFix;
 
@@ -316,30 +318,52 @@ static void assetEndProc(AssetDataBuilder* datab) {
     datab->currentIndLevel -= 1;
 }
 
-static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str name) {
+static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str arrName, Str elName, Str elParentName) {
     assetIndent(datab);
     // NOTE(khvorov) Pointers are offsets (in elements) from the base of allData, so make them into actual pointers by adding the base of allData
     strbuilderfmt(datab->str,
         "for (u32 ind = 0; ind < %d; ind++) {"
-        "adata->%.*s.elements[ind].ptr = adata->%.*s.allData + (u64)adata->%.*s.elements[ind].ptr;"
-        "}\n", count, LIT(name), LIT(name), LIT(name)
+        "adata->%.*s.%.*s[ind].ptr = adata->%.*s.%.*s + (u64)adata->%.*s.%.*s[ind].ptr;"
+        "}\n", count, LIT(arrName), LIT(elName), LIT(arrName), LIT(elParentName), LIT(arrName), LIT(elName)
     );
 }
 
 typedef struct ArrType {void* ptr;} ArrType;
-#define assetAddArrOfArr(Arena, Datab, Name, DataType, Arr, Data) assetAddArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
-static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
-    // NOTE(khvorov) Make pointers in array elements be offsets (in elements) from the base of allData
+static void convertPtrsToIndices(void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize) {
     for (i64 arrElIndex = 0; arrElIndex < arrElementCount; arrElIndex++) {
         ArrType* arr = (ArrType*)(arrPtr + (arrElIndex * arrElementSize));
         assert(arr->ptr >= allDataPtr);
         arr->ptr = (void*)(((u64)arr->ptr - (u64)allDataPtr) / allDataElementSize);
     }
+}
+
+#define assetAddArrOfArr(Arena, Datab, Name, DataType, Arr, Data) assetAddArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
+static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
+    convertPtrsToIndices(arrPtr, arrElementSize, arrElementCount, allDataPtr, allDataElementSize);
     assetBeginStruct(datab);
     assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
     assetAddArrField_(datab, strfmt(arena, "%*sarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
     assetEndStruct(datab, name);
-    arrpush(datab->ptrfixes, ((PtrFix){name, arrElementCount}));
+    arrpush(datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("allData"), arrElementCount}));
+}
+
+#define assetAddArrOfArrOfArr(Arena, Datab, Name, DataType, Arr, MidArr, Data) \
+    assetAddArrOfArrOfArr_(Arena, Datab, STR(Name), STR(DataType), (Arr).ptr, sizeof(*(Arr).ptr), (Arr).len, (MidArr).ptr, sizeof(*(MidArr).ptr), (MidArr).len, (Data).ptr, sizeof(*(Data).ptr), (Data).len)
+static void assetAddArrOfArrOfArr_(
+    Arena* arena, AssetDataBuilder* datab, Str name, Str dataType,
+    void* arrPtr, i64 arrElementSize, i64 arrElementCount,
+    void* midDataPtr, i64 midDataElementSize, i64 midDataElementCount,
+    void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount
+) {
+    convertPtrsToIndices(arrPtr, arrElementSize, arrElementCount, midDataPtr, midDataElementSize);
+    convertPtrsToIndices(midDataPtr, midDataElementSize, midDataElementCount, allDataPtr, allDataElementSize);
+    assetBeginStruct(datab);
+    assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%*sarr midData", LIT(dataType)), midDataPtr, midDataElementSize, midDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%*sarrarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
+    assetEndStruct(datab, name);
+    arrpush(datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("midData"), arrElementCount}));
+    arrpush(datab->ptrfixes, ((PtrFix){name, STR("midData"), STR("allData"), midDataElementCount}));
 }
 
 static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
@@ -964,12 +988,31 @@ int main() {
     assetAddArrOfArr(arena, datab, "animations", "f32", animations, allAnimationDurations);
     assetAddArrOfArr(arena, datab, "shaders", "u8", shaders, allShaderData);
 
+    // TODO(khvorov) Get from art
+    V2 tempCollisionPoints[] = {
+        {100.0f, 40.0f}, {170.0f, 40.0f},
+        {170.0f, -40.0f}, {100.0f, -40.0f},
+    };
+    V2arr collisionPoints = {tempCollisionPoints, arrayCount(tempCollisionPoints)};
+
+    V2arr tempCollisionPolys[] = {
+        {collisionPoints.ptr, collisionPoints.len},
+    };
+    V2arrarr collisionPolys = {tempCollisionPolys, arrayCount(tempCollisionPolys)};
+
+    V2arrarr tempStages[] = {
+        {collisionPolys.ptr, collisionPolys.len},
+    };
+    struct {V2arrarr* ptr; i64 len;} stages = {tempStages, arrayCount(tempStages)};
+
+    assetAddArrOfArrOfArr(arena, datab, "stages", "V2", stages, collisionPolys, collisionPoints);
+
     assetEndData(datab);
 
     assetBeginProc(datab);
     for (i32 ptrfixIndex = 0; ptrfixIndex < datab->ptrfixes.len; ptrfixIndex++) {
         PtrFix ptrfix = datab->ptrfixes.ptr[ptrfixIndex];
-        assetAddPtrFixLoop(datab, ptrfix.len, ptrfix.elementName);
+        assetAddPtrFixLoop(datab, ptrfix.len, ptrfix.arrName, ptrfix.elName, ptrfix.elParentName);
     }
     assetEndProc(datab);
 
