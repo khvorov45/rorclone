@@ -640,8 +640,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     f32 collisionProp = 1.0f;
                     V2 collisionWallUnitV = {};
 
-                    // TODO(khvorov) Too many special conditions/branches. There is probably a way to simplify this
-
                     for (u32 collisionLineIndex = 0; collisionLineIndex < arrayCount(tempCollisionLines); collisionLineIndex++) {
                         CollisionLine collisionLine = tempCollisionLines[collisionLineIndex];
 
@@ -653,13 +651,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                         f32 wallShiftClamped = min(wallShift, 0);
                         V2 wallShiftV = v2scale(wallNormal, absval(wallShiftClamped));
 
-                        V2 wallBound1 = v2add(collisionLine.p1, wallShiftV);
-                        V2 wallBound2 = v2add(collisionLine.p2, wallShiftV);
+                        V2 wallBound1Og = v2add(collisionLine.p1, wallShiftV);
+                        V2 wallBound2Og = v2add(collisionLine.p2, wallShiftV);
+
+                        V2 wallBound1 = {min(wallBound1Og.x, wallBound2Og.x), min(wallBound1Og.y, wallBound2Og.y)};
+                        V2 wallBound2 = {max(wallBound1Og.x, wallBound2Og.x), max(wallBound1Og.y, wallBound2Og.y)};
 
                         f32 wallExt = v2dot(wallUnitV, collision.dim);
                         V2 wallExtV = v2scale(wallUnitV, wallExt);
-                        if (wallExt > 0) {wallBound1 = v2sub(wallBound1, wallExtV);}
-                        else             {wallBound2 = v2sub(wallBound2, wallExtV);}
+                        wallBound1 = v2sub(wallBound1, wallExtV);
 
                         V2 currentToBound1 = v2sub(wallBound1, currentPos);
                         f32 currentDotWallNormal = v2dot(currentToBound1, wallNormal);
