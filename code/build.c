@@ -170,6 +170,20 @@ typedef struct AseFile {
 
 #pragma pack(pop)
 
+static Texture aseDecodeTextureFromCel(Arena* arena, AseChunk* chunk) {
+    Texture texture = {};
+    assert(chunk->cel.type == AseCelType_CompressedImage);
+    u32 compressedDataSize = chunk->size - offsetof(AseChunk, cel.compressed);
+    texture.w = chunk->cel.width;
+    texture.h = chunk->cel.height;
+    i32 pixelsInTex = texture.w * texture.h;
+    texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
+    i32 bytesInTex = pixelsInTex * sizeof(u32);
+    int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
+    assert(decodeResult == bytesInTex);
+    return texture;
+}
+
 //
 // SECTION Misc
 //
@@ -822,16 +836,7 @@ int main() {
                         LayerTypeInfo thisLayerTypeInfo = layerTypeInfo.ptr[chunk->cel.index];
                         switch (thisLayerTypeInfo) {
                             case LayerTypeInfo_None: {
-                                Texture texture = {};
-                                assert(chunk->cel.type == AseCelType_CompressedImage);
-                                u32 compressedDataSize = chunk->size - offsetof(AseChunk, cel.compressed);
-                                texture.w = chunk->cel.width;
-                                texture.h = chunk->cel.height;
-                                i32 pixelsInTex = texture.w * texture.h;
-                                texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
-                                i32 bytesInTex = pixelsInTex * sizeof(u32);
-                                int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
-                                assert(decodeResult == bytesInTex);
+                                Texture texture = aseDecodeTextureFromCel(arena, chunk);
 
                                 V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
                                 if (frameIndex == 0) {
@@ -961,6 +966,142 @@ int main() {
     strbuilderEnumAdd(strbuilder, STR("Count"));
     strbuilderEnumEnd(strbuilder);
 
+    struct {V2* ptr; i32 len, cap;} collisionPoints = {.cap = 1024};
+    collisionPoints.ptr = arenaAllocArray(arena, V2, collisionPoints.cap);
+
+    for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosStages.len; fileInfoIndex++) {
+        FileInfoStage* info = fileInfosStages.ptr + fileInfoIndex;
+        AseFile* ase = info->content;
+        AseFrame* frame = ase->frames;
+
+        Texture canvas = {.w = ase->width, .h = ase->height};
+        canvas.pixels = arenaAllocAndZeroArray(arena, u32, (canvas.w + 2) * (canvas.h + 2));
+        i32 canvasPitch = canvas.w + 2;
+
+        // NOTE(khvorov) Fill the border
+        {
+            i64 bytesInRow = canvasPitch * sizeof(*canvas.pixels);
+            memset(canvas.pixels, 0xFF, bytesInRow);
+            memset(canvas.pixels + (canvas.h + 1) * canvasPitch, 0xFF, bytesInRow);
+            for (i32 rowIndex = 1; rowIndex <= canvas.h; rowIndex++) {
+                u32* rowPixels = canvas.pixels + rowIndex * canvasPitch;
+                rowPixels[0] = 0xFFFF'FFFF;
+                rowPixels[canvas.w + 1] = 0xFFFF'FFFF;
+            }
+            canvas.pixels = canvas.pixels + canvasPitch + 1;
+        }
+
+        for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
+            assert(frame->magic == 0xF1FA);
+            AseChunk* chunk = frame->chunks;
+            for (u16 chunkIndex = 0; chunkIndex < frame->chunksCountNew; chunkIndex++) {
+                assert(chunk->size >= 6);
+
+                switch (chunk->type) {
+                    case AseChunkType_Cel: {
+                        Texture texture = aseDecodeTextureFromCel(arena, chunk);
+                        assert(chunk->cel.posY + texture.h <= canvas.h);
+                        assert(chunk->cel.posX + texture.w <= canvas.w);
+                        u32* canvasTopleft = canvas.pixels + chunk->cel.posY * canvasPitch + chunk->cel.posX;
+                        for (i32 texRow = 0; texRow < texture.h; texRow++) {
+                            u32* rowPixels = texture.pixels + texRow * texture.w;
+                            u32* canvasRowStart = canvasTopleft + texRow * canvasPitch;
+                            memcpy(canvasRowStart, rowPixels, texture.w * sizeof(*texture.pixels));
+                        }
+                    } break;
+
+                    case AseChunkType_ColorProfile:
+                    case AseChunkType_Layer:
+                    case AseChunkType_Palette:
+                    case AseChunkType_OldPalette:
+                        break;
+
+                    default: assert(!"unimplemented"); break;
+                }
+
+                chunk = (void*)chunk + chunk->size;
+            }            
+        }
+
+        // NOTE(khvorov) Write the canvas out to a string for debugging
+        if (false) {
+            i32 tempStrPitch = (canvas.w + 3);
+            i32 tempStrLen = tempStrPitch * (canvas.h + 2);
+            char* tempStr = arenaAllocArray(arena, char, tempStrLen);
+            memset(tempStr, '+', tempStrLen);
+            tempStr = tempStr + tempStrPitch + 1;
+            for (i32 rowIndex = -1; rowIndex <= canvas.h; rowIndex++) {
+                tempStr[rowIndex * tempStrPitch + canvas.h + 1] = '\n';
+                for (i32 colIndex = -1; colIndex <= canvas.w; colIndex++) {
+                    i32 pxIndex = rowIndex * canvasPitch + colIndex;
+                    u32 pxValue = canvas.pixels[pxIndex];
+                    char ch = pxValue ? 'x' : 'o';
+                    i32 chIndex = rowIndex * tempStrPitch + colIndex;
+                    tempStr[chIndex] = ch;
+                }
+            }
+            writeEntireFile(arena, STR("temp.txt"), tempStr - tempStrPitch - 1, tempStrLen);
+        }
+
+        // TODO(khvorov) Figure out how to do walk around all the polygons adding each of their points to the array once in the right order
+        for (i32 rowIndex = -1; rowIndex < canvas.h; rowIndex++) {
+            for (i32 colIndex = 0; colIndex <= canvas.w; colIndex++) {
+                
+                // TODO(khvorov) Remove - ignoring the edges of the canvas
+                if (rowIndex == -1 || rowIndex == canvas.h - 1 || colIndex == 0 || colIndex == canvas.w) {
+                    continue;
+                }
+
+                i32 pxIndex = rowIndex * canvasPitch + colIndex;
+                u32 pxValue = canvas.pixels[pxIndex];
+                u32 pxValueLeft = canvas.pixels[pxIndex - 1];
+                u32 pxValueBottom = canvas.pixels[pxIndex + canvasPitch];
+
+                bool pxFilled = pxValue != 0;
+                bool pxFilledLeft = pxValueLeft != 0;
+                bool pxFilledBottom = pxValueBottom != 0;
+
+                // NOTE(khvorov) Go bottom-up to follow world-space
+
+                f32 pxLeft = colIndex;
+                f32 pxBottom = canvas.h - 1 - rowIndex;
+                f32 pxTop = pxBottom + 1;
+
+                if (pxFilled != pxFilledLeft) {
+                    V2 top = {pxLeft, pxTop};
+                    V2 bottom = {pxLeft, pxBottom};
+
+                    if (pxFilled) {
+                        arrpush(collisionPoints, bottom);
+                        arrpush(collisionPoints, top);
+                    } else {
+                        arrpush(collisionPoints, top);
+                        arrpush(collisionPoints, bottom);
+                    }
+
+                    // TODO(khvorov) Remove once a proper edge determination proc is figured out
+                    goto tempStopPuttingPointsIn;
+                }
+
+                if (pxFilled != pxFilledBottom) {
+
+                }
+            }
+        }
+        tempStopPuttingPointsIn:
+    }
+
+    // TODO(khvorov) Pull from art    
+    V2arr tempCollisionPolys[] = {
+        {collisionPoints.ptr, collisionPoints.len},
+    };
+    V2arrarr collisionPolys = {tempCollisionPolys, arrayCount(tempCollisionPolys)};
+
+    V2arrarr tempStages[] = {
+        {collisionPolys.ptr, collisionPolys.len},
+    };
+    struct {V2arrarr* ptr; i64 len;} stages = {tempStages, arrayCount(tempStages)};
+
     BinBuilder binb = {.cap = 50 * Megabyte};
     binb.ptr = arenaAllocArray(arena, u8, binb.cap);
 
@@ -987,23 +1128,6 @@ int main() {
 
     assetAddArrOfArr(arena, datab, "animations", "f32", animations, allAnimationDurations);
     assetAddArrOfArr(arena, datab, "shaders", "u8", shaders, allShaderData);
-
-    // TODO(khvorov) Get from art
-    V2 tempCollisionPoints[] = {
-        {100.0f, 40.0f}, {170.0f, 40.0f},
-        {170.0f, -40.0f}, {100.0f, -40.0f},
-    };
-    V2arr collisionPoints = {tempCollisionPoints, arrayCount(tempCollisionPoints)};
-
-    V2arr tempCollisionPolys[] = {
-        {collisionPoints.ptr, collisionPoints.len},
-    };
-    V2arrarr collisionPolys = {tempCollisionPolys, arrayCount(tempCollisionPolys)};
-
-    V2arrarr tempStages[] = {
-        {collisionPolys.ptr, collisionPolys.len},
-    };
-    struct {V2arrarr* ptr; i64 len;} stages = {tempStages, arrayCount(tempStages)};
 
     assetAddArrOfArrOfArr(arena, datab, "stages", "V2", stages, collisionPolys, collisionPoints);
 
