@@ -156,6 +156,7 @@ static f32 squareRoot(f32 x) {
     return result;
 }
 
+typedef struct V2i { i32 x, y; } V2i;
 typedef struct V2 { f32 x, y; } V2;
 typedef struct V2arr {V2* ptr; i64 len;} V2arr;
 typedef struct V2arrarr {V2arr* ptr; i64 len;} V2arrarr;
@@ -167,6 +168,7 @@ static V2 v2lerp(V2 v1, V2 v2, f32 by) {return (V2) {lerp(v1.x, v2.x, by), lerp(
 static f32 v2dot(V2 v1, V2 v2) {return v1.x * v2.x + v1.y * v2.y;}
 static f32 v2outer(V2 v1, V2 v2) {return v1.x * v2.y - v1.y * v2.x;}
 static bool v2eq(V2 v1, V2 v2) {return v1.x == v2.x && v1.y == v2.y;}
+static bool v2ieq(V2i v1, V2i v2) {return v1.x == v2.x && v1.y == v2.y;}
 static f32 v2len(V2 v) {return squareRoot(square(v.x) + square(v.y));}
 static V2 v2normalize(V2 v) {return v2scale(v, 1 / v2len(v));}
 static V2 v2xyquaterturn(V2 v) {return (V2) {-v.y, v.x};}

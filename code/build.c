@@ -484,6 +484,71 @@ static u64 parseUint(Str str) {
     return result;
 }
 
+typedef struct CornerInfo {
+    bool isCorner;
+    V2i pos;
+    V2i nextDir;
+} CornerInfo;
+
+static CornerInfo getCornerInfo(i32 rowEdge, i32 colEdge, i32 canvasPitch, Texture canvas) {
+    i32 pxIndexTopLeft = (rowEdge - 1) * canvasPitch + (colEdge - 1);
+    i32 pxIndexTopRight = pxIndexTopLeft + 1;
+    i32 pxIndexBottomLeft = pxIndexTopLeft + canvasPitch;
+    i32 pxIndexBottomRight = pxIndexBottomLeft + 1;
+
+    u32 pxValueTopLeft = canvas.pixels[pxIndexTopLeft];
+    u32 pxValueTopRight = canvas.pixels[pxIndexTopRight];
+    u32 pxValueBottomLeft = canvas.pixels[pxIndexBottomLeft];
+    u32 pxValueBottomRight = canvas.pixels[pxIndexBottomRight];
+
+    bool pxFilledTopLeft = pxValueTopLeft != 0;
+    bool pxFilledTopRight = pxValueTopRight != 0;
+    bool pxFilledBottomLeft = pxValueBottomLeft != 0;
+    bool pxFilledBottomRight = pxValueBottomRight != 0;
+
+    bool isCornerTopLeft = (pxFilledBottomLeft == pxFilledBottomRight && pxFilledBottomLeft == pxFilledTopRight) && (pxFilledBottomLeft != pxFilledTopLeft);
+    bool isCornerTopRight = (pxFilledBottomLeft == pxFilledBottomRight && pxFilledBottomLeft == pxFilledTopLeft) && (pxFilledBottomLeft != pxFilledTopRight);
+    bool isCornerBottomLeft = (pxFilledTopLeft == pxFilledTopRight && pxFilledTopLeft == pxFilledBottomRight) && (pxFilledTopLeft != pxFilledBottomLeft);
+    bool isCornerBottomRight = (pxFilledTopLeft == pxFilledTopRight && pxFilledTopLeft == pxFilledBottomLeft) && (pxFilledTopLeft != pxFilledBottomRight);
+    bool isCorner = isCornerBottomLeft || isCornerTopLeft || isCornerBottomRight || isCornerTopRight;
+
+    // TODO(khvorov) Do we need to handle double corner situations?
+    assert(isCornerTopLeft + isCornerTopRight + isCornerBottomLeft + isCornerBottomRight <= 1);
+
+    CornerInfo result = {};
+    if (isCorner) {
+        result.isCorner = true;
+        result.pos = (V2i) {colEdge, rowEdge};
+
+        if (isCornerBottomRight) {
+            if (!pxFilledBottomRight) {
+                result.nextDir.y = 1;
+            } else {
+                assert(!"unimplemented");
+            }
+        } else if (isCornerBottomLeft) {
+            if (!pxFilledBottomLeft) {
+                result.nextDir.x = -1;
+            } else {
+                assert(!"unimplemented");
+            }
+        } else if (isCornerTopLeft) {
+            if (!pxFilledTopLeft) {
+                result.nextDir.y = -1;
+            } else {
+                assert(!"unimplemented");
+            }
+        } else if (isCornerTopRight) {
+            if (!pxFilledTopRight) {
+                result.nextDir.x = 1;
+            } else {
+                assert(!"unimplemented");
+            }
+        }
+    }
+    return result;
+}
+
 //
 // SECTION Bench
 //
@@ -1020,7 +1085,7 @@ int main() {
                 }
 
                 chunk = (void*)chunk + chunk->size;
-            }            
+            }
         }
 
         // NOTE(khvorov) Write the canvas out to a string for debugging
@@ -1043,55 +1108,70 @@ int main() {
             writeEntireFile(arena, STR("temp.txt"), tempStr - tempStrPitch - 1, tempStrLen);
         }
 
-        // TODO(khvorov) Figure out how to do walk around all the polygons adding each of their points to the array once in the right order
-        for (i32 rowIndex = -1; rowIndex < canvas.h; rowIndex++) {
-            for (i32 colIndex = 0; colIndex <= canvas.w; colIndex++) {
-                
-                // TODO(khvorov) Remove - ignoring the edges of the canvas
-                if (rowIndex == -1 || rowIndex == canvas.h - 1 || colIndex == 0 || colIndex == canvas.w) {
-                    continue;
-                }
+        bool* pixelsTouched = arenaAllocAndZeroArray(arena, bool, (canvas.w + 1) * (canvas.h + 1));
+        i32 pixelsTouchedPitch = canvas.w + 1;
+        for (bool allPixelsTouched = false; !allPixelsTouched;) {
+            allPixelsTouched = true;
 
-                i32 pxIndex = rowIndex * canvasPitch + colIndex;
-                u32 pxValue = canvas.pixels[pxIndex];
-                u32 pxValueLeft = canvas.pixels[pxIndex - 1];
-                u32 pxValueBottom = canvas.pixels[pxIndex + canvasPitch];
+            CornerInfo firstCorner = {};
+            for (i32 rowEdge = 0; rowEdge <= canvas.h; rowEdge += 1) {
+                for (i32 colEdge = 0; colEdge <= canvas.w; colEdge += 1) {
+                    bool* touchedBefore = pixelsTouched + rowEdge * pixelsTouchedPitch + colEdge;
+                    if (!*touchedBefore) {
+                        *touchedBefore = true;
+                        allPixelsTouched = false;
 
-                bool pxFilled = pxValue != 0;
-                bool pxFilledLeft = pxValueLeft != 0;
-                bool pxFilledBottom = pxValueBottom != 0;
-
-                // NOTE(khvorov) Go bottom-up to follow world-space
-
-                f32 pxLeft = colIndex;
-                f32 pxBottom = canvas.h - 1 - rowIndex;
-                f32 pxTop = pxBottom + 1;
-
-                if (pxFilled != pxFilledLeft) {
-                    V2 top = {pxLeft, pxTop};
-                    V2 bottom = {pxLeft, pxBottom};
-
-                    if (pxFilled) {
-                        arrpush(collisionPoints, bottom);
-                        arrpush(collisionPoints, top);
-                    } else {
-                        arrpush(collisionPoints, top);
-                        arrpush(collisionPoints, bottom);
+                        CornerInfo cornerInfo = getCornerInfo(rowEdge, colEdge, canvasPitch, canvas);
+                        if (cornerInfo.isCorner) {
+                            firstCorner = cornerInfo;
+                            goto breakFirstCornerSearch;
+                        }
                     }
-
-                    // TODO(khvorov) Remove once a proper edge determination proc is figured out
-                    goto tempStopPuttingPointsIn;
-                }
-
-                if (pxFilled != pxFilledBottom) {
-
                 }
             }
+            breakFirstCornerSearch:
+
+            if (firstCorner.isCorner) {
+                assert(!allPixelsTouched);
+
+                for (CornerInfo currentCorner = firstCorner;;) {
+                    V2 currentCornerPosWorld = {currentCorner.pos.x, canvas.h - currentCorner.pos.y};
+                    arrpush(collisionPoints, currentCornerPosWorld);
+
+                    CornerInfo nextCorner;
+                    i32 rowEdge = currentCorner.pos.y;
+                    i32 colEdge = currentCorner.pos.x;
+                    for (;;) {
+                        rowEdge += currentCorner.nextDir.y;
+                        colEdge += currentCorner.nextDir.x;
+                        assert(rowEdge >= 0 && rowEdge <= canvas.h);
+                        assert(colEdge >= 0 && colEdge <= canvas.w);
+
+                        bool* touchedBefore = pixelsTouched + rowEdge * pixelsTouchedPitch + colEdge;
+                        if (*touchedBefore) {
+                            assert(v2ieq((V2i) {colEdge, rowEdge}, firstCorner.pos));
+                            goto breakShapeWalk;
+                        } else {
+                            *touchedBefore = true;
+
+                            CornerInfo cornerInfo = getCornerInfo(rowEdge, colEdge, canvasPitch, canvas);
+                            if (cornerInfo.isCorner) {
+                                nextCorner = cornerInfo;
+                                goto breakNextCornerSearch;
+                            }
+                        }
+                    }
+                    breakNextCornerSearch:
+                    assert(nextCorner.isCorner);
+
+                    currentCorner = nextCorner;
+                }
+                breakShapeWalk:
+            }
         }
-        tempStopPuttingPointsIn:
     }
 
-    // TODO(khvorov) Pull from art    
+    // TODO(khvorov) Pull from art
     V2arr tempCollisionPolys[] = {
         {collisionPoints.ptr, collisionPoints.len},
     };

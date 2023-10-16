@@ -66,7 +66,7 @@ typedef struct AssetData {
         u8arr elements[4];
     } shaders;
     struct {
-        V2 allData[2];
+        V2 allData[4];
         V2arr midData[1];
         V2arrarr elements[1];
     } stages;
