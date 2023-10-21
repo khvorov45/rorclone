@@ -634,48 +634,48 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     // TODO(khvorov) Get colllision polygons from the correct stage
                     V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
 
-                    // TODO(khvorov) Go through all the polygons
-                    V2arr collisionPolygon = stageCollisionPolygons.ptr[0];
+                    for (i64 polyIndex = 0; polyIndex < stageCollisionPolygons.len; polyIndex++) {
+                        V2arr collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
+                        for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
+                            CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 
-                    for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
-                        CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
+                            V2 wallVector = v2sub(collisionLine.p2, collisionLine.p1);
+                            V2 wallUnitV = v2normalize(wallVector);
+                            V2 wallNormal = v2xyquaterturn(wallUnitV);
 
-                        V2 wallVector = v2sub(collisionLine.p2, collisionLine.p1);
-                        V2 wallUnitV = v2normalize(wallVector);
-                        V2 wallNormal = v2xyquaterturn(wallUnitV);
+                            f32 wallShift = v2dot(wallNormal, collision.dim);
+                            f32 wallShiftClamped = min(wallShift, 0);
+                            V2 wallShiftV = v2scale(wallNormal, absval(wallShiftClamped));
 
-                        f32 wallShift = v2dot(wallNormal, collision.dim);
-                        f32 wallShiftClamped = min(wallShift, 0);
-                        V2 wallShiftV = v2scale(wallNormal, absval(wallShiftClamped));
+                            V2 wallBound1Og = v2add(collisionLine.p1, wallShiftV);
+                            V2 wallBound2Og = v2add(collisionLine.p2, wallShiftV);
 
-                        V2 wallBound1Og = v2add(collisionLine.p1, wallShiftV);
-                        V2 wallBound2Og = v2add(collisionLine.p2, wallShiftV);
+                            V2 wallBound1 = {min(wallBound1Og.x, wallBound2Og.x), min(wallBound1Og.y, wallBound2Og.y)};
+                            V2 wallBound2 = {max(wallBound1Og.x, wallBound2Og.x), max(wallBound1Og.y, wallBound2Og.y)};
 
-                        V2 wallBound1 = {min(wallBound1Og.x, wallBound2Og.x), min(wallBound1Og.y, wallBound2Og.y)};
-                        V2 wallBound2 = {max(wallBound1Og.x, wallBound2Og.x), max(wallBound1Og.y, wallBound2Og.y)};
+                            f32 wallExt = v2dot(wallUnitV, collision.dim);
+                            V2 wallExtV = v2scale(wallUnitV, wallExt);
+                            wallBound1 = v2sub(wallBound1, wallExtV);
 
-                        f32 wallExt = v2dot(wallUnitV, collision.dim);
-                        V2 wallExtV = v2scale(wallUnitV, wallExt);
-                        wallBound1 = v2sub(wallBound1, wallExtV);
-
-                        V2 currentToBound1 = v2sub(wallBound1, currentPos);
-                        f32 currentDotWallNormal = v2dot(currentToBound1, wallNormal);
-                        if (currentDotWallNormal <= 0) {
-                            V2 newPos = v2add(currentPos, deltaPos);
-                            V2 newToBound1 = v2sub(wallBound1, newPos);
-                            f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
-                            if (newDotWallNormal > 0) {
-                                V2 currentToBound2 = v2sub(wallBound2, currentPos);
-                                f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
-                                f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
-                                if (deltaOuterBound1 * deltaOuterBound2 <= 0) {
-                                    collided = true;
-                                    f32 currentDotWallNormalMag = absval(currentDotWallNormal);
-                                    f32 newDotWallNormalMag = absval(newDotWallNormal);
-                                    f32 thisCollisionProp = currentDotWallNormalMag / (currentDotWallNormalMag + newDotWallNormalMag);
-                                    if (thisCollisionProp < collisionProp) {
-                                        collisionProp = thisCollisionProp;
-                                        collisionWallUnitV = wallUnitV;
+                            V2 currentToBound1 = v2sub(wallBound1, currentPos);
+                            f32 currentDotWallNormal = v2dot(currentToBound1, wallNormal);
+                            if (currentDotWallNormal <= 0) {
+                                V2 newPos = v2add(currentPos, deltaPos);
+                                V2 newToBound1 = v2sub(wallBound1, newPos);
+                                f32 newDotWallNormal = v2dot(newToBound1, wallNormal);
+                                if (newDotWallNormal > 0) {
+                                    V2 currentToBound2 = v2sub(wallBound2, currentPos);
+                                    f32 deltaOuterBound1 = v2outer(deltaPos, currentToBound1);
+                                    f32 deltaOuterBound2 = v2outer(deltaPos, currentToBound2);
+                                    if (deltaOuterBound1 * deltaOuterBound2 <= 0) {
+                                        collided = true;
+                                        f32 currentDotWallNormalMag = absval(currentDotWallNormal);
+                                        f32 newDotWallNormalMag = absval(newDotWallNormal);
+                                        f32 thisCollisionProp = currentDotWallNormalMag / (currentDotWallNormalMag + newDotWallNormalMag);
+                                        if (thisCollisionProp < collisionProp) {
+                                            collisionProp = thisCollisionProp;
+                                            collisionWallUnitV = wallUnitV;
+                                        }
                                     }
                                 }
                             }
@@ -731,29 +731,31 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
 
                 // TODO(khvorov) Temp code to draw collision lines
                 V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
-                V2arr collisionPolygon = stageCollisionPolygons.ptr[0];
-                for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
-                    CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
+                for (i64 polyIndex = 0; polyIndex < stageCollisionPolygons.len; polyIndex++) {
+                    V2arr collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
+                    for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
+                        CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 
-                    Rect collisionLineRectWorld = {.topleft = (collisionLine.p1.x < collisionLine.p2.x) || (collisionLine.p1.y > collisionLine.p2.y) ? collisionLine.p1 : collisionLine.p2};
-                    f32 thickness = 1;
-                    collisionLineRectWorld.dim = (V2) {v2len(v2sub(collisionLine.p2, collisionLine.p1)), thickness};
-                    bool vertical = collisionLine.p1.x == collisionLine.p2.x;
-                    if (vertical) {
-                        collisionLineRectWorld.dim.y = collisionLineRectWorld.dim.x;
-                        collisionLineRectWorld.dim.x = thickness;
+                        Rect collisionLineRectWorld = {.topleft = (collisionLine.p1.x < collisionLine.p2.x) || (collisionLine.p1.y > collisionLine.p2.y) ? collisionLine.p1 : collisionLine.p2};
+                        f32 thickness = 1;
+                        collisionLineRectWorld.dim = (V2) {v2len(v2sub(collisionLine.p2, collisionLine.p1)), thickness};
+                        bool vertical = collisionLine.p1.x == collisionLine.p2.x;
+                        if (vertical) {
+                            collisionLineRectWorld.dim.y = collisionLineRectWorld.dim.x;
+                            collisionLineRectWorld.dim.x = thickness;
+                        }
+
+                        // TODO(khvorov) Reenable
+                        // if (collisionLine.type == CollisionLineType_BlockFromRight) {
+                        //     collisionLineRectWorld.topleft.x -= collisionLineRectWorld.dim.x;
+                        // }
+
+                        // if (collisionLine.type == CollisionLineType_BlockFromBottom) {
+                        //     collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
+                        // }
+
+                        drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 1});
                     }
-
-                    // TODO(khvorov) Reenable
-                    // if (collisionLine.type == CollisionLineType_BlockFromRight) {
-                    //     collisionLineRectWorld.topleft.x -= collisionLineRectWorld.dim.x;
-                    // }
-
-                    // if (collisionLine.type == CollisionLineType_BlockFromBottom) {
-                    //     collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
-                    // }
-
-                    drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 1});
                 }
             }
         }

@@ -524,25 +524,25 @@ static CornerInfo getCornerInfo(i32 rowEdge, i32 colEdge, i32 canvasPitch, Textu
             if (!pxFilledBottomRight) {
                 result.nextDir.y = 1;
             } else {
-                assert(!"unimplemented");
+                result.nextDir.x = 1;
             }
         } else if (isCornerBottomLeft) {
             if (!pxFilledBottomLeft) {
                 result.nextDir.x = -1;
             } else {
-                assert(!"unimplemented");
+                result.nextDir.y = 1;
             }
         } else if (isCornerTopLeft) {
             if (!pxFilledTopLeft) {
                 result.nextDir.y = -1;
             } else {
-                assert(!"unimplemented");
+                result.nextDir.x = -1;
             }
         } else if (isCornerTopRight) {
             if (!pxFilledTopRight) {
                 result.nextDir.x = 1;
             } else {
-                assert(!"unimplemented");
+                result.nextDir.y = -1;
             }
         }
     }
@@ -1034,6 +1034,12 @@ int main() {
     struct {V2* ptr; i32 len, cap;} collisionPoints = {.cap = 1024};
     collisionPoints.ptr = arenaAllocArray(arena, V2, collisionPoints.cap);
 
+    struct {V2arr* ptr; i32 len, cap;} collisionPolys = {.cap = 1024};
+    collisionPolys.ptr = arenaAllocArray(arena, V2arr, collisionPolys.cap);
+    
+    struct {V2arrarr* ptr; i64 len, cap;} stages = {.cap = 1024};
+    stages.ptr = arenaAllocArray(arena, V2arrarr, stages.cap);
+
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosStages.len; fileInfoIndex++) {
         FileInfoStage* info = fileInfosStages.ptr + fileInfoIndex;
         AseFile* ase = info->content;
@@ -1108,6 +1114,9 @@ int main() {
             writeEntireFile(arena, STR("temp.txt"), tempStr - tempStrPitch - 1, tempStrLen);
         }
 
+        V2arrarr stage = {.ptr = collisionPolys.ptr + collisionPolys.len};
+        i64 collisionPolysLenBefore = collisionPolys.len;
+
         bool* pixelsTouched = arenaAllocAndZeroArray(arena, bool, (canvas.w + 1) * (canvas.h + 1));
         i32 pixelsTouchedPitch = canvas.w + 1;
         for (bool allPixelsTouched = false; !allPixelsTouched;) {
@@ -1134,6 +1143,8 @@ int main() {
             if (firstCorner.isCorner) {
                 assert(!allPixelsTouched);
 
+                V2arr collisionPoly = {.ptr = collisionPoints.ptr + collisionPoints.len};
+                i32 collisionPointsLenBeforeShapeWalk = collisionPoints.len;
                 for (CornerInfo currentCorner = firstCorner;;) {
                     V2 currentCornerPosWorld = {currentCorner.pos.x, canvas.h - currentCorner.pos.y};
                     arrpush(collisionPoints, currentCornerPosWorld);
@@ -1167,20 +1178,15 @@ int main() {
                     currentCorner = nextCorner;
                 }
                 breakShapeWalk:
+
+                collisionPoly.len = collisionPoints.len - collisionPointsLenBeforeShapeWalk;
+                arrpush(collisionPolys, collisionPoly);
             }
         }
+
+        stage.len = collisionPolys.len - collisionPolysLenBefore;
+        arrpush(stages, stage);
     }
-
-    // TODO(khvorov) Pull from art
-    V2arr tempCollisionPolys[] = {
-        {collisionPoints.ptr, collisionPoints.len},
-    };
-    V2arrarr collisionPolys = {tempCollisionPolys, arrayCount(tempCollisionPolys)};
-
-    V2arrarr tempStages[] = {
-        {collisionPolys.ptr, collisionPolys.len},
-    };
-    struct {V2arrarr* ptr; i64 len;} stages = {tempStages, arrayCount(tempStages)};
 
     BinBuilder binb = {.cap = 50 * Megabyte};
     binb.ptr = arenaAllocArray(arena, u8, binb.cap);
