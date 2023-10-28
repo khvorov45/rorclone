@@ -43,7 +43,7 @@ typedef union V4 {
 #include "generated.c"
 
 static AtlasID getAtlasID(EntityID entity, AnimationID animation, i32 animationFrame) {
-    i32 firstAtlasID = globalFirstAtlasID[entity];
+    i32 firstAtlasID = globalFirstAtlasIDEntities[entity];
     i32 animationOffset = globalAnimationCumulativeFrameCounts[animation];
     AtlasID id = (AtlasID)(firstAtlasID + animationOffset + animationFrame);
     return id;
@@ -83,7 +83,6 @@ typedef struct Game {
     struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
     f32 spriteScaleMultiplier;
     V2 cameraPos;
-    struct {i32 index, variant;} stage;
     struct {i32 w, h;} window;
 } Game;
 
@@ -280,7 +279,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     Game game_ = {
         .screenRects.cap = 1024,
         .sprites.cap = 1024,
-        .spriteScaleMultiplier = 4.4f,
+        .spriteScaleMultiplier = 5.0f,
     };
     Game* game = &game_;
     game->sprites.ptr = arenaAllocArray(memory.perm, Sprite, game->sprites.cap);
@@ -754,7 +753,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                         //     collisionLineRectWorld.topleft.y += collisionLineRectWorld.dim.y;
                         // }
 
-                        drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 1});
+                        drawRect(game, collisionLineRectWorld, (V4) {.r = 1, .g = 1, .b = 1, .a = 0.5});
                     }
                 }
             }
@@ -815,6 +814,22 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     Rect collision = game->assets->entities.collision[sprite->entity];
                     drawRect(game, (Rect) {v2add(sprite->common.topleft, collision.topleft), collision.dim}, (V4) {.r = 1, .b = 1, .a = 0.25});
                 }
+
+                // TODO(khvorov) Pull the correct stage
+                // TODO(khvorov) Draw the stage sensibly
+                {
+                    SpriteRect* spriteRect = spriteRects + 0;
+                    *spriteRect = (SpriteRect) {};
+                    AtlasID id = AtlasID_Stage1_variant1;
+                    AtlasLocation atlasLoc = game->assets->atlas.locations[id];
+                    // NOTE(khvorov) Add 1 to account for the transparent
+                    // border, assume the original art offset is (0, 0) because
+                    // we expect all pixels in stages to be filled
+                    atlasLoc.offset.y = atlasLoc.rect.dim.y - 1;
+                    atlasLoc.offset.x += 1;
+                    spriteRect->texInAtlas = atlasLoc;
+                }
+
                 d3d11.context->lpVtbl->Unmap(d3d11.context, (ID3D11Resource*)d3d11.rects.sprite.instanceBuf, 0);
             }
 
