@@ -818,7 +818,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                 // TODO(khvorov) Pull the correct stage
                 // TODO(khvorov) Draw the stage sensibly
                 {
-                    SpriteRect* spriteRect = spriteRects + 0;
+                    SpriteRect* spriteRect = spriteRects + 0; // NOTE(khvorov) This overwrites game sprites above, temp measure
                     *spriteRect = (SpriteRect) {};
                     AtlasID id = AtlasID_Stage1_variant1;
                     AtlasLocation atlasLoc = game->assets->atlas.locations[id];
