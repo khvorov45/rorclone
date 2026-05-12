@@ -6,3 +6,4 @@ code/*hlsl_*
 *.rdbg
 *.png
 *.bin
+raddbg*
