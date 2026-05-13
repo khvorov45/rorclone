@@ -523,10 +523,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
                     spriteRect->texInAtlas = atlasLoc;
                     Rect collisionRect = game->assets->entities.collision[sprite->entity];
                     spriteRect->fliplines = v2add(collisionRect.topleft, v2scale(collisionRect.dim, 0.5f));
-
-                    // TODO(khvorov) Temp collision shape drawing
-                    Rect collision = game->assets->entities.collision[sprite->entity];
-                    drawRect(game, (Rect) {v2add(sprite->common.topleft, collision.topleft), collision.dim}, (V4) {.r = 1, .b = 1, .a = 0.25});
                 }
 
                 // TODO(khvorov) Pull the correct stage
