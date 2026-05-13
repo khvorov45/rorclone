@@ -59,12 +59,6 @@ typedef struct Sprite {
     bool isGrounded;
 } Sprite;
 
-typedef struct SpriteRect {
-    SpriteCommon common;
-    AtlasLocation texInAtlas;
-    V2 fliplines;
-} SpriteRect;
-
 typedef struct ScreenRect {
     Rect scr;
     Rect texInAtlas;

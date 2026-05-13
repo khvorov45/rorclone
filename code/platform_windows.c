@@ -130,6 +130,12 @@ void toggleFullscreen(HWND hwnd, WINDOWPLACEMENT* wpPrev) {
     }
 }
 
+typedef struct SpriteRect {
+    SpriteCommon common;
+    AtlasLocation texInAtlas;
+    V2 fliplines;
+} SpriteRect;
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, int cmdshow) {
     unused(previnstance);
     unused(cmdline);
