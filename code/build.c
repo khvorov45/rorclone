@@ -1,3 +1,7 @@
+// Extracts assets from source files and packs them into an asset file the game uses
+// NOTE: All packed textures have a 1px border around them, as a result there is a 2px gap between all textures
+// Compiles the game
+
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -1180,7 +1184,6 @@ int main() {
         arrpush(stages, stage);
     }
 
-    // TODO(khvorov) Reenable
     assert(atlasTextures.len == atlasTextures.cap);
 
     Texture atlas = {};

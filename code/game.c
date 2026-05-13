@@ -109,7 +109,6 @@ static Rect worldToScreenRect(Rect rect, V2 cameraPos, f32 spriteScaleMultiplier
 
 static void drawRect(Game* game, Rect rectWorld, V4 color) {
     Rect topleftRectScr = worldToScreenRect(rectWorld, game->cameraPos, game->spriteScaleMultiplier, game->window.w, game->window.h);
-    // TODO(khvorov) All locations in the atlas have a transparent border around them. Should they?
     Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
     ScreenRect pointRect = {.scr = topleftRectScr, .texInAtlas = whitePx, .color = color};
     arrpush(game->screenRects, pointRect);
@@ -124,7 +123,8 @@ static Game* gameInit(Arena* arena) {
     game->sprites.ptr = arenaAllocArray(arena, Sprite, game->sprites.cap);
     game->screenRects.ptr = arenaAllocArray(arena, ScreenRect, game->screenRects.cap);
 
-    // TODO(khvorov) Should world space be bottom-up?
+    // TODO(khvorov) Verify the following:
+    // World space is top-down and world space coordinates correspond to pixel coordinates in source art
     // TODO(khvorov) Placeholder, just to have something
     {
         arrpush(game->sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
@@ -253,7 +253,7 @@ static void gameUpdateAndRender(Game* game, Input* input, f32 msSinceLastUpdate)
         }
     }
 
-    // TODO(khvorov) Special glyphs to draw as sprites
+    // TODO(khvorov) Temp section
     {
         game->screenRects.len = 0;
         drawStr(game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
