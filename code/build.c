@@ -1308,7 +1308,7 @@ int main() {
     writeEntireFile(arena, STR("code/generated.c"), strbuilder->ptr, strbuilder->len);
 
     {
-        Str cmd = strfmt(arena, "clang code/rorclone.c -std=c2x -march=native -Wall -Wextra -g -o build/rorclone.exe");
+        Str cmd = strfmt(arena, "clang code/platform_windows.c -std=c2x -march=native -Wall -Wextra -g -o build/rorclone.exe");
         writeToStdout(strfmt(arena, "%.*s\n", LIT(cmd)));
         STARTUPINFOA startupInfo = {.cb = sizeof(startupInfo)};
         PROCESS_INFORMATION procInfo = {};
