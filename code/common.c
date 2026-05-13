@@ -173,6 +173,11 @@ static f32 v2len(V2 v) {return squareRoot(square(v.x) + square(v.y));}
 static V2 v2normalize(V2 v) {return v2scale(v, 1 / v2len(v));}
 static V2 v2xyquaterturn(V2 v) {return (V2) {-v.y, v.x};}
 
+typedef union V4 {
+    struct {f32 x, y, z, w;};
+    struct {f32 r, g, b, a;};
+} V4;
+
 typedef struct Rect {V2 topleft, dim;} Rect;
 static Rect rectShrink(Rect rect, f32 by) {return (Rect) {.topleft = v2add(rect.topleft, v2fromf32(by)), .dim = v2sub(rect.dim, v2fromf32(by * 2))};}
 static Rect rectTranslate(Rect rect, V2 by) {return (Rect) {.topleft = v2add(rect.topleft, by), .dim = rect.dim};}
