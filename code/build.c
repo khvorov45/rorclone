@@ -43,6 +43,7 @@
 // SECTION Aseprite
 //
 
+static_assert(true); // NOTE: otherwise clang may complain
 #pragma pack(push)
 #pragma pack(1)
 
@@ -1017,15 +1018,15 @@ int main() {
             frame = (AseFrame*)chunk;
         }
     }
-    
+
     assert(collisionRects.len == collisionRects.cap);
-    
+
     struct {V2* ptr; i32 len, cap;} collisionPoints = {.cap = 1024};
     collisionPoints.ptr = arenaAllocArray(arena, V2, collisionPoints.cap);
 
     struct {V2arr* ptr; i32 len, cap;} collisionPolys = {.cap = 1024};
     collisionPolys.ptr = arenaAllocArray(arena, V2arr, collisionPolys.cap);
-    
+
     struct {V2arrarr* ptr; i64 len, cap;} stages = {.cap = 1024};
     stages.ptr = arenaAllocArray(arena, V2arrarr, stages.cap);
 
