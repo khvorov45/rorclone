@@ -1,5 +1,9 @@
 #pragma clang diagnostic ignored "-Wunused-function"
 
+#define STB_SPRINTF_STATIC
+#define STB_SPRINTF_IMPLEMENTATION
+#include "stb_sprintf.h"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -28,10 +32,6 @@
 #define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
 #define arenaAllocAndZeroArray(arena, type, count) ((type*)arenaAllocAndZero((arena), sizeof(type) * (count)))
 #define tempMemoryBlock(arena_) for (TempMemory _temp_ = beginTempMemory(arena_); _temp_.arena; endTempMemory(&_temp_))
-
-#define STB_SPRINTF_STATIC
-#define STB_SPRINTF_IMPLEMENTATION
-#include "stb_sprintf.h"
 
 typedef int8_t   i8;
 typedef uint8_t  u8;
