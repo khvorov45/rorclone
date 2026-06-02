@@ -96,6 +96,8 @@ typedef enum AseLayerType: u16 {
     AseLayerType_Tilemap = 2,
 } AseLayerType;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
 typedef struct AseChunkLayer {
     AseLayerFlags flags;
     AseLayerType type;
@@ -108,6 +110,7 @@ typedef struct AseChunkLayer {
     AseString name;
     u16 tilesetIndex;
 } AseChunkLayer;
+#pragma clang diagnostic pop
 
 typedef enum AseCelType: u16 {
     AseCelType_Raw = 0,

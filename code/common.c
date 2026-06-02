@@ -1,5 +1,4 @@
 #pragma clang diagnostic ignored "-Wunused-function"
-#pragma clang diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
 
 #include <stdint.h>
 #include <stddef.h>
