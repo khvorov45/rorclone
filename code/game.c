@@ -65,10 +65,12 @@ typedef struct ScreenRect {
     V4 color;
 } ScreenRect;
 
+typedef struct GameSprites {Sprite* ptr; i64 len; i64 cap;} GameSprites;
+typedef struct GameScreenRects {ScreenRect* ptr; i64 len; i64 cap;} GameScreenRects;
 typedef struct Game {
     AssetData* assets;
-    struct {Sprite* ptr; i64 len; i64 cap;} sprites;
-    struct {ScreenRect* ptr; i64 len; i64 cap;} screenRects;
+    GameSprites sprites;
+    GameScreenRects screenRects;
     f32 spriteScaleMultiplier;
     V2 cameraPos;
     struct {i32 w, h;} window;
@@ -78,7 +80,7 @@ static void drawGlyph(Game* game, char glyph, V2 topleft, V4 color) {
     i32 glyphXOffset = (i32)glyph * (game->assets->font.glyphW + 2);
     Rect atlas = game->assets->atlas.locations[AtlasID_Font].rect;
     Rect glyphRect = {.topleft = {atlas.topleft.x + glyphXOffset, atlas.topleft.y}, .dim = {game->assets->font.glyphW + 2, atlas.dim.y}};
-    arrpush(game->screenRects, ((ScreenRect) {.scr.topleft = topleft, .scr.dim = glyphRect.dim, .texInAtlas = glyphRect, .color = color}));
+    dynarrpush(&game->screenRects, ((ScreenRect) {.scr.topleft = topleft, .scr.dim = glyphRect.dim, .texInAtlas = glyphRect, .color = color}));
 }
 
 static void drawStr(Game* game, Str str, V2 topleft, V4 color) {
@@ -111,25 +113,23 @@ static void drawRect(Game* game, Rect rectWorld, V4 color) {
     Rect topleftRectScr = worldToScreenRect(rectWorld, game->cameraPos, game->spriteScaleMultiplier, game->window.w, game->window.h);
     Rect whitePx = rectShrink(game->assets->atlas.locations[AtlasID_Whitepx].rect, 1);
     ScreenRect pointRect = {.scr = topleftRectScr, .texInAtlas = whitePx, .color = color};
-    arrpush(game->screenRects, pointRect);
+    dynarrpush(&game->screenRects, pointRect);
 }
 static void drawPoint(Game* game, V2 posWorld, V4 color) { drawRect(game, (Rect) {posWorld, v2fromf32(1)}, color);}
 
 static Game* gameInit(Arena* arena) {
-    Game* game = arenaAllocAndZeroArray(arena, Game, 1);
-    game->screenRects.cap = 1024,
-    game->sprites.cap = 1024,
+    Game* game = arenaAllocAndZeroOne(arena, Game);
     game->spriteScaleMultiplier = 5.0f,
-    game->sprites.ptr = arenaAllocArray(arena, Sprite, game->sprites.cap);
-    game->screenRects.ptr = arenaAllocArray(arena, ScreenRect, game->screenRects.cap);
+    game->sprites = (GameSprites) arenaAllocDynarr(arena, Sprite, 1024);
+    game->screenRects = (GameScreenRects) arenaAllocDynarr(arena, ScreenRect, 1024);
 
     // TODO(khvorov) Verify the following:
     // World space is top-down and world space coordinates correspond to pixel coordinates in source art
     // TODO(khvorov) Placeholder, just to have something
     {
-        arrpush(game->sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
-        // arrpush(game->sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
-        // arrpush(game->sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
+        dynarrpush(&game->sprites, ((Sprite) {.common.topleft = {0, 0}, .entity = EntityID_Commando}));
+        // dynarrpush(&game->sprites, ((Sprite) {.common.topleft = {0, -20}, .common.mirrorX = true, .entity = EntityID_Commando}));
+        // dynarrpush(&game->sprites, ((Sprite) {.common.topleft = {20, -20}, .entity = EntityID_Lemurian}));
     }
 
     return game;
@@ -161,10 +161,10 @@ static void gameUpdateAndRender(Game* game, Input* input, f32 msSinceLastUpdate)
             V2 collisionWallUnitV = {};
 
             // TODO(khvorov) Get colllision polygons from the correct stage
-            V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
+            V2sliceslice stageCollisionPolygons = game->assets->stages.elements[0];
 
             for (i64 polyIndex = 0; polyIndex < stageCollisionPolygons.len; polyIndex++) {
-                V2arr collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
+                V2slice collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
                 for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
                     CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 
@@ -259,9 +259,9 @@ static void gameUpdateAndRender(Game* game, Input* input, f32 msSinceLastUpdate)
         drawStr(game, STR("spritestr"), (V2) {200, 300}, (V4) {.g = 100, .a = 100}); // TODO(khvorov) Temp
 
         // TODO(khvorov) Temp code to draw collision lines
-        V2arrarr stageCollisionPolygons = game->assets->stages.elements[0];
+        V2sliceslice stageCollisionPolygons = game->assets->stages.elements[0];
         for (i64 polyIndex = 0; polyIndex < stageCollisionPolygons.len; polyIndex++) {
-            V2arr collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
+            V2slice collisionPolygon = stageCollisionPolygons.ptr[polyIndex];
             for (u32 collisionLineIndex = 0; collisionLineIndex < collisionPolygon.len; collisionLineIndex++) {
                 CollisionLine collisionLine = {collisionPolygon.ptr[collisionLineIndex], collisionPolygon.ptr[(collisionLineIndex + 1) % collisionPolygon.len]};
 

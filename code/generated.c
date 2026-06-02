@@ -79,16 +79,16 @@ typedef struct AssetData {
     } atlas;
     struct {
         f32 allData[4];
-        f32arr elements[3];
+        f32slice elements[3];
     } animations;
     struct {
         u8 allData[95548];
-        u8arr elements[4];
+        u8slice elements[4];
     } shaders;
     struct {
         V2 allData[56];
-        V2arr midData[8];
-        V2arrarr elements[4];
+        V2slice midData[8];
+        V2sliceslice elements[4];
     } stages;
 } AssetData;
 #pragma pack(pop)

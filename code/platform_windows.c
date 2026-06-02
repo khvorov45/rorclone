@@ -52,7 +52,7 @@ typedef struct D3D11VSPS {
     ID3D11Buffer* instanceBuf;
 } D3D11VSPS;
 
-static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, u8arr shadervs, u8arr shaderps, i64 instanceBufSize) {
+static D3D11VSPS d3d11CreateVSPS(ID3D11Device* device, D3D11_INPUT_ELEMENT_DESC* desc, i32 descCount, u8slice shadervs, u8slice shaderps, i64 instanceBufSize) {
     D3D11VSPS result = {};
     HRESULT ID3D11Device_CreateVertexShaderResult = ID3D11Device_CreateVertexShader(device, shadervs.ptr, shadervs.len, NULL, &result.vshader);
     assertHR(ID3D11Device_CreateVertexShaderResult);
@@ -186,7 +186,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         assert(GetFileSizeExResult);
         assert(fileSize.QuadPart == sizeof(AssetData));
 
-        game->assets = arenaAllocArray(memory.perm, AssetData, 1);
+        game->assets = arenaAllocOne(memory.perm, AssetData);
         DWORD bytesRead = 0;
         BOOL ReadFileResult = ReadFile(hfile, game->assets, fileSize.QuadPart, &bytesRead, 0);
         assert(ReadFileResult);
@@ -255,7 +255,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         #endif
         D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0 };
         HRESULT D3D11CreateDeviceResult = D3D11CreateDevice(
-            NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, flags, levels, arrayCount(levels),
+            NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, flags, levels, carrayCount(levels),
             D3D11_SDK_VERSION, &d3d11.device, NULL, &d3d11.context
         );
         assertHR(D3D11CreateDeviceResult);
@@ -329,9 +329,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"OFFSET", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, texInAtlas.offset), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"FLIPLINES", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(SpriteRect, fliplines), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game->assets->shaders.elements[ShaderID_sprite_vs];
-        u8arr shaderps = game->assets->shaders.elements[ShaderID_sprite_ps];
-        d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game->sprites.cap);
+        u8slice shadervs = game->assets->shaders.elements[ShaderID_sprite_vs];
+        u8slice shaderps = game->assets->shaders.elements[ShaderID_sprite_ps];
+        d3d11.rects.sprite = d3d11CreateVSPS(d3d11.device, desc, carrayCount(desc), shadervs, shaderps, sizeof(SpriteRect) * game->sprites.cap);
     }
 
     {
@@ -342,9 +342,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             {"TEX_DIM", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ScreenRect, texInAtlas.dim), D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(ScreenRect, color), D3D11_INPUT_PER_INSTANCE_DATA, 1},
         };
-        u8arr shadervs = game->assets->shaders.elements[ShaderID_screen_vs];
-        u8arr shaderps = game->assets->shaders.elements[ShaderID_screen_ps];
-        d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, arrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game->screenRects.cap);
+        u8slice shadervs = game->assets->shaders.elements[ShaderID_screen_vs];
+        u8slice shaderps = game->assets->shaders.elements[ShaderID_screen_ps];
+        d3d11.rects.screen = d3d11CreateVSPS(d3d11.device, desc, carrayCount(desc), shadervs, shaderps, sizeof(ScreenRect) * game->screenRects.cap);
     }
 
     {

@@ -185,7 +185,7 @@ static Texture aseDecodeTextureFromCel(Arena* arena, AseChunk* chunk) {
     texture.w = chunk->cel.width;
     texture.h = chunk->cel.height;
     i32 pixelsInTex = texture.w * texture.h;
-    texture.pixels = arenaAllocArray(arena, u32, pixelsInTex);
+    texture.pixels = ((u32slice) arenaAllocArray(arena, u32, pixelsInTex)).ptr;
     i32 bytesInTex = pixelsInTex * sizeof(u32);
     int decodeResult = stbi_zlib_decode_buffer((char*)texture.pixels, bytesInTex, (char*)chunk->cel.compressed, compressedDataSize);
     assert(decodeResult == bytesInTex);
@@ -363,10 +363,10 @@ static void convertPtrsToIndices(void* arrPtr, i64 arrElementSize, i64 arrElemen
 static void assetAddArrOfArr_(Arena* arena, AssetDataBuilder* datab, Str name, Str dataType, void* arrPtr, i64 arrElementSize, i64 arrElementCount, void* allDataPtr, i64 allDataElementSize, i64 allDataElementCount) {
     convertPtrsToIndices(arrPtr, arrElementSize, arrElementCount, allDataPtr, allDataElementSize);
     assetBeginStruct(datab);
-    assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
-    assetAddArrField_(datab, strfmt(arena, "%*sarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%.*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%.*sslice elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
     assetEndStruct(datab, name);
-    arrpush(datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("allData"), arrElementCount}));
+    dynarrpush(&datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("allData"), arrElementCount}));
 }
 
 #define assetAddArrOfArrOfArr(Arena, Datab, Name, DataType, Arr, MidArr, Data) \
@@ -380,12 +380,12 @@ static void assetAddArrOfArrOfArr_(
     convertPtrsToIndices(arrPtr, arrElementSize, arrElementCount, midDataPtr, midDataElementSize);
     convertPtrsToIndices(midDataPtr, midDataElementSize, midDataElementCount, allDataPtr, allDataElementSize);
     assetBeginStruct(datab);
-    assetAddArrField_(datab, strfmt(arena, "%*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
-    assetAddArrField_(datab, strfmt(arena, "%*sarr midData", LIT(dataType)), midDataPtr, midDataElementSize, midDataElementCount);
-    assetAddArrField_(datab, strfmt(arena, "%*sarrarr elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%.*s allData", LIT(dataType)), allDataPtr, allDataElementSize, allDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%.*sslice midData", LIT(dataType)), midDataPtr, midDataElementSize, midDataElementCount);
+    assetAddArrField_(datab, strfmt(arena, "%.*ssliceslice elements", LIT(dataType)), arrPtr, arrElementSize, arrElementCount);
     assetEndStruct(datab, name);
-    arrpush(datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("midData"), arrElementCount}));
-    arrpush(datab->ptrfixes, ((PtrFix){name, STR("midData"), STR("allData"), midDataElementCount}));
+    dynarrpush(&datab->ptrfixes, ((PtrFix){name, STR("elements"), STR("midData"), arrElementCount}));
+    dynarrpush(&datab->ptrfixes, ((PtrFix){name, STR("midData"), STR("allData"), midDataElementCount}));
 }
 
 static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
@@ -413,7 +413,7 @@ static void writeEntireFile(Arena* arena, Str path, void* ptr, i64 len) {
     CloseHandle(hfile);
 }
 
-static u8arr readEntireFile(Arena* arena, Str path) {
+static u8slice readEntireFile(Arena* arena, Str path) {
     HANDLE hfile = 0;
     tempMemoryBlock(arena) {
         Str path0 = strfmt(arena, "%.*s", LIT(path));
@@ -434,16 +434,15 @@ static u8arr readEntireFile(Arena* arena, Str path) {
     BOOL GetFileSizeExResult = GetFileSizeEx(hfile, &fileSize);
     assert(GetFileSizeExResult);
 
-    void* fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
+    u8slice fileContent = arenaAllocArray(arena, u8, fileSize.QuadPart);
     DWORD bytesRead = 0;
-    BOOL ReadFileResult = ReadFile(hfile, fileContent, fileSize.QuadPart, &bytesRead, 0);
+    BOOL ReadFileResult = ReadFile(hfile, fileContent.ptr, fileSize.QuadPart, &bytesRead, 0);
     assert(ReadFileResult);
     assert(bytesRead == fileSize.QuadPart);
 
     CloseHandle(hfile);
 
-    u8arr result = {fileContent, fileSize.QuadPart};
-    return result;
+    return fileContent;
 }
 
 static void writeToStdout(Str msg) {WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg.ptr, msg.len, 0, 0);}
@@ -575,7 +574,7 @@ void benchAlignment(Arena* arena) {
     // NOTE(khvorov) Did not see any difference in speed with aligned vs unalligned array
 
     i64 misalignments[] = {0, 1};
-    for (u64 misalignmentIndex = 0; misalignmentIndex < arrayCount(misalignments); misalignmentIndex++) tempMemoryBlock(arena) {
+    for (u64 misalignmentIndex = 0; misalignmentIndex < carrayCount(misalignments); misalignmentIndex++) tempMemoryBlock(arena) {
         // NOTE(khvorov) Assume aligned
         assert(((u64)arenaFreeptr(arena) & 3) == 0);
 
@@ -583,7 +582,7 @@ void benchAlignment(Arena* arena) {
         arena->used += thisMisalign;
 
         i64 floatsToAlloc[] = {100, 1000, 10000, 100000};
-        for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)arrayCount(floatsToAlloc); floatsToAllocIndex++) {
+        for (i64 floatsToAllocIndex = 0; floatsToAllocIndex < (i64)carrayCount(floatsToAlloc); floatsToAllocIndex++) {
             i64 floatCount = floatsToAlloc[floatsToAllocIndex];
             u64 minDiff = UINT64_MAX;
             u64 maxDiff = 0;
@@ -594,13 +593,13 @@ void benchAlignment(Arena* arena) {
             for (i64 runIndex = 0; runIndex < timesToRun; runIndex++) tempMemoryBlock(arena) {
                 u64 before = __rdtsc();
 
-                f32* arr = arenaAllocArray(arena, f32, floatCount);
+                f32slice arr = arenaAllocArray(arena, f32, floatCount);
                 for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                    arr[floatIndex] = (f32)floatIndex;
+                    arr.ptr[floatIndex] = (f32)floatIndex;
                 }
                 f32 sum = 0;
                 for (i64 floatIndex = 0; floatIndex < floatCount; floatIndex++) {
-                    sum += arr[floatIndex];
+                    sum += arr.ptr[floatIndex];
                 }
 
                 sumOfSums += sum;
@@ -638,17 +637,15 @@ int main() {
     if (false) benchAlignment(arena);
 
     StrBuilder strbuilder_ = {.cap = 20 * Megabyte};
-    strbuilder_.ptr = arenaAllocArray(arena, char, strbuilder_.cap);
+    strbuilder_.ptr = ((Str) arenaAllocArray(arena, char, strbuilder_.cap)).ptr;
     StrBuilder* strbuilder = &strbuilder_;
 
     strbuilderfmt(strbuilder, "// generated by build.c, do not edit by hand\n\n");
 
     // TODO(khvorov) Split stage art into collision and non-collision
 
-    struct {FileInfoEntity* ptr; i64 len, cap;} fileInfosEntities = {.cap = 1024};
-    fileInfosEntities.ptr = arenaAllocArray(arena, FileInfoEntity, fileInfosEntities.cap);
-    struct {FileInfoStage* ptr; i64 len, cap;} fileInfosStages = {.cap = 1024};
-    fileInfosStages.ptr = arenaAllocArray(arena, FileInfoStage, fileInfosStages.cap);
+    struct {FileInfoEntity* ptr; i64 len, cap;} fileInfosEntities = arenaAllocDynarr(arena, FileInfoEntity, 1024);
+    struct {FileInfoStage* ptr; i64 len, cap;} fileInfosStages = arenaAllocDynarr(arena, FileInfoStage, 1024);
     {
         WIN32_FIND_DATAA findData = {};
         HANDLE findHandle = FindFirstFileA("data/*.aseprite", &findData);
@@ -658,7 +655,7 @@ int main() {
             Str filefull = strfmt(arena, "%s", findData.cFileName);
 
             Str path = strfmt(arena, "data/%.*s", LIT(filefull));
-            u8arr fileContent = readEntireFile(arena, path);
+            u8slice fileContent = readEntireFile(arena, path);
 
             AseFile* ase = (AseFile*)fileContent.ptr;
             assert(ase->magic == 0xA5E0);
@@ -683,7 +680,7 @@ int main() {
                 assert(found);
                 info.index = parseUint(indexStr);
                 info.variant = parseUint(variantStr);
-                arrpush(fileInfosStages, info);
+                dynarrpush(&fileInfosStages, info);
             } else {
                 FileInfoEntity info = {.content = ase, .names.file = filefull};
                 for (i32 ind = 0; ind < filename.len; ind++) {
@@ -696,7 +693,7 @@ int main() {
                         break;
                     }
                 }
-                arrpush(fileInfosEntities, info);
+                dynarrpush(&fileInfosEntities, info);
             }
 
         } while (FindNextFileA(findHandle, &findData));
@@ -705,8 +702,7 @@ int main() {
     qsort(fileInfosEntities.ptr, fileInfosEntities.len, sizeof(*fileInfosEntities.ptr), fileInfoEntityCmp);
     qsort(fileInfosStages.ptr, fileInfosStages.len, sizeof(*fileInfosStages.ptr), fileInfoStageCmp);
 
-    struct {Str* ptr; i64 len, cap;} entityNamesDedup = {.cap = fileInfosEntities.len};
-    entityNamesDedup.ptr = arenaAllocArray(arena, Str, fileInfosEntities.len);
+    struct {Str* ptr; i64 len, cap;} entityNamesDedup = arenaAllocDynarr(arena, Str, fileInfosEntities.len);;
     for (i64 ind = 0; ind < fileInfosEntities.len; ind++) {
         FileInfoEntity* info = fileInfosEntities.ptr + ind;
         Str newName = info->names.entity;
@@ -719,7 +715,7 @@ int main() {
             }
         }
         if (!alreadyPresent) {
-            arrpush(entityNamesDedup, newName);
+            dynarrpush(&entityNamesDedup, newName);
         }
     }
 
@@ -732,10 +728,10 @@ int main() {
 
     {
         strbuilderEnumBegin(strbuilder, STR("StageID"));
-        bool* stageAlreadyPresent = arenaAllocAndZeroArray(arena, bool, fileInfosStages.len);
+        u8slice stageAlreadyPresent = arenaAllocAndZeroArray(arena, u8, fileInfosStages.len);
         for (i64 ind = 0; ind < fileInfosStages.len; ind++) {
             FileInfoStage info = fileInfosStages.ptr[ind];
-            bool* alreadyDone = stageAlreadyPresent + info.index;
+            u8* alreadyDone = stageAlreadyPresent.ptr + info.index;
             if (!*alreadyDone) {
                 *alreadyDone = true;
                 Str name = strfmt(arena, "Stage%d", info.index);
@@ -746,14 +742,14 @@ int main() {
         strbuilderEnumEnd(strbuilder);
     }
 
-    Str* animationNames = arenaAllocArray(arena, Str, fileInfosEntities.len);
+    struct {Str* ptr; i64 len;} animationNames = arenaAllocArray(arena, Str, fileInfosEntities.len);
 
     strbuilderEnumBegin(strbuilder, STR("AnimationID"));
     for (i64 ind = 0; ind < fileInfosEntities.len; ind++) {
         FileInfoEntity info = fileInfosEntities.ptr[ind];
         Str animationName = strfmt(arena, "%.*s_%.*s", LIT(info.names.entity), LIT(info.names.animation));
         strbuilderEnumAdd(strbuilder, animationName);
-        animationNames[ind] = animationName;
+        animationNames.ptr[ind] = animationName;
     }
     strbuilderEnumAdd(strbuilder, STR("Count"));
     strbuilderEnumEnd(strbuilder);
@@ -763,7 +759,7 @@ int main() {
     strbuilderEnumAdd(strbuilder, STR("Font"));
     for (i64 ind = 0; ind < fileInfosEntities.len; ind++) {
         FileInfoEntity info = fileInfosEntities.ptr[ind];
-        Str animationName = animationNames[ind];
+        Str animationName = animationNames.ptr[ind];
         for (int frameIndex = 0; frameIndex < info.content->frameCount; frameIndex++) {
             Str atlasName = strfmt(arena, "%.*s_frame%d", LIT(animationName), frameIndex + 1);
             strbuilderEnumAdd(strbuilder, atlasName);
@@ -819,7 +815,7 @@ int main() {
                 currentEntity = info.names.entity;
             }
 
-            Str animationName = animationNames[ind];
+            Str animationName = animationNames.ptr[ind];
             Str key = strfmt(arena, "AnimationID_%.*s", LIT(animationName));
             Str value = strfmt(arena, "%d", currentCumulativeCount);
             builderTableAdd(strbuilder, key, value);
@@ -850,20 +846,19 @@ int main() {
     }
     strbuilderTableEnd(strbuilder);
 
-    struct {Texture* ptr; i64 len, cap;} atlasTextures = {.cap = totalAtlasTextureCount};
-    atlasTextures.ptr = arenaAllocArray(arena, Texture, atlasTextures.cap);
+    struct {Texture* ptr; i64 len, cap;} atlasTextures = arenaAllocDynarr(arena, Texture, totalAtlasTextureCount);
 
     {
         u32 whitePxTexData[] = {0xffff'ffff};
         Texture whitePxTex = {.w = 1, .h = 1, .pixels = whitePxTexData};
-        arrpush(atlasTextures, whitePxTex);
+        dynarrpush(&atlasTextures, whitePxTex);
     }
 
     struct {i32 glyphCount, glyphW, glyphH, gapW; Texture tex;} font = {.glyphCount = 128, .glyphW = 8, .glyphH = 16, .gapW = 2};
     {
         font.tex.w = font.glyphW * font.glyphCount + (font.glyphCount - 1) * font.gapW;
         font.tex.h = font.glyphH;
-        font.tex.pixels = arenaAllocArray(arena, u32, font.tex.w * font.tex.h);
+        font.tex.pixels = ((u32slice) arenaAllocArray(arena, u32, font.tex.w * font.tex.h)).ptr;
         {
             // Taken from https://github.com/nakst/luigi/blob/main/luigi.h
             // Taken from https://commons.wikimedia.org/wiki/File:Codepage-437.png
@@ -920,20 +915,16 @@ int main() {
             }
         }
 
-        arrpush(atlasTextures, font.tex);
+        dynarrpush(&atlasTextures, font.tex);
     }
 
-    AtlasLocation* atlasLocations = arenaAllocAndZeroArray(arena, AtlasLocation, totalAtlasTextureCount);
-    struct {f32* ptr; i64 len, cap;} allAnimationDurations = {.cap = 4096};
-    allAnimationDurations.ptr = arenaAllocArray(arena, f32, allAnimationDurations.cap);
-    struct {Animation* ptr; i32 len;} animations = {.len = fileInfosEntities.len};
-    animations.ptr = arenaAllocArray(arena, Animation, animations.len);
+    struct {AtlasLocation* ptr; i64 len;} atlasLocations = arenaAllocAndZeroArray(arena, AtlasLocation, totalAtlasTextureCount);
+    struct {f32* ptr; i64 len, cap;} allAnimationDurations = arenaAllocDynarr(arena, f32, 4096);;
+    struct {Animation* ptr; i32 len;} animations = arenaAllocArray(arena, Animation, fileInfosEntities.len);
 
-    struct {LayerTypeInfo* ptr; i32 len, cap;} layerTypeInfo = {.cap = 1024};
-    layerTypeInfo.ptr = arenaAllocArray(arena, LayerTypeInfo, layerTypeInfo.cap);
+    struct {LayerTypeInfo* ptr; i32 len, cap;} layerTypeInfo = arenaAllocDynarr(arena, LayerTypeInfo, 1024);
 
-    struct {Rect* ptr; i32 len, cap;} collisionRects = {.cap = entityNamesDedup.len};
-    collisionRects.ptr = arenaAllocArray(arena, Rect, collisionRects.cap);
+    struct {Rect* ptr; i32 len, cap;} collisionRects = arenaAllocDynarr(arena, Rect, entityNamesDedup.len);
 
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosEntities.len; fileInfoIndex++) {
         FileInfoEntity* info = fileInfosEntities.ptr + fileInfoIndex;
@@ -950,7 +941,7 @@ int main() {
 
         for (i32 frameIndex = 0; frameIndex < ase->frameCount; frameIndex++) {
             assert(frame->magic == 0xF1FA);
-            arrpush(allAnimationDurations, frame->frameDurationMS);
+            dynarrpush(&allAnimationDurations, frame->frameDurationMS);
 
             bool foundCollision = false;
 
@@ -968,9 +959,9 @@ int main() {
                         Str name = {chunk->layer.name.str, chunk->layer.name.len};
                         bool isCollision = streq(name, STR("collision"));
                         if (isCollision) {
-                            arrpush(layerTypeInfo, LayerTypeInfo_Collision);
+                            dynarrpush(&layerTypeInfo, LayerTypeInfo_Collision);
                         } else {
-                            arrpush(layerTypeInfo, LayerTypeInfo_None);
+                            dynarrpush(&layerTypeInfo, LayerTypeInfo_None);
                         }
                     } break;
 
@@ -985,18 +976,18 @@ int main() {
                                 if (frameIndex == 0) {
                                     firstFrameArtOffset = artOffset;
                                 } else {
-                                    AtlasLocation* thisLoc = atlasLocations + atlasTextures.len;
+                                    AtlasLocation* thisLoc = atlasLocations.ptr + atlasTextures.len;
                                     V2 thisOffset = v2sub(firstFrameArtOffset, artOffset);
                                     thisLoc->offset = thisOffset; // TODO(khvorov) Do we ever need an offset that's not in the top-left?
                                 }
 
-                                arrpush(atlasTextures, texture);
+                                dynarrpush(&atlasTextures, texture);
                             } break;
 
                             case LayerTypeInfo_Collision: {
                                 foundCollision = true;
                                 Rect collision = {{chunk->cel.posX, chunk->cel.posY}, {chunk->cel.width, chunk->cel.height}};
-                                arrpush(collisionRects, collision);
+                                dynarrpush(&collisionRects, collision);
                             } break;
                         }
                     } break;
@@ -1024,14 +1015,9 @@ int main() {
 
     assert(collisionRects.len == collisionRects.cap);
 
-    struct {V2* ptr; i32 len, cap;} collisionPoints = {.cap = 1024};
-    collisionPoints.ptr = arenaAllocArray(arena, V2, collisionPoints.cap);
-
-    struct {V2arr* ptr; i32 len, cap;} collisionPolys = {.cap = 1024};
-    collisionPolys.ptr = arenaAllocArray(arena, V2arr, collisionPolys.cap);
-
-    struct {V2arrarr* ptr; i64 len, cap;} stages = {.cap = 1024};
-    stages.ptr = arenaAllocArray(arena, V2arrarr, stages.cap);
+    struct {V2* ptr; i32 len, cap;} collisionPoints = arenaAllocDynarr(arena, V2, 1024);;
+    struct {V2slice* ptr; i32 len, cap;} collisionPolys = arenaAllocDynarr(arena, V2slice, 1024);;
+    struct {V2sliceslice* ptr; i64 len, cap;} stages = arenaAllocDynarr(arena, V2sliceslice, 1024);;
 
     for (i32 fileInfoIndex = 0; fileInfoIndex < fileInfosStages.len; fileInfoIndex++) {
         FileInfoStage* info = fileInfosStages.ptr + fileInfoIndex;
@@ -1039,7 +1025,7 @@ int main() {
         AseFrame* frame = ase->frames;
 
         Texture canvas = {.w = ase->width, .h = ase->height};
-        canvas.pixels = arenaAllocAndZeroArray(arena, u32, (canvas.w + 2) * (canvas.h + 2));
+        canvas.pixels = ((u32slice)arenaAllocAndZeroArray(arena, u32, (canvas.w + 2) * (canvas.h + 2))).ptr;
         i32 canvasPitch = canvas.w + 2;
 
         // NOTE(khvorov) Fill the border
@@ -1075,10 +1061,10 @@ int main() {
                         }
 
                         V2 artOffset = (V2) {chunk->cel.posX, chunk->cel.posY};
-                        AtlasLocation* thisLoc = atlasLocations + atlasTextures.len;
+                        AtlasLocation* thisLoc = atlasLocations.ptr + atlasTextures.len;
                         thisLoc->offset = artOffset;
 
-                        arrpush(atlasTextures, texture);
+                        dynarrpush(&atlasTextures, texture);
                     } break;
 
                     case AseChunkType_ColorProfile:
@@ -1087,7 +1073,7 @@ int main() {
                     case AseChunkType_OldPalette:
                         break;
 
-                    default: assert(!"unimplemented"); break;
+                    default: unimplemented(); break;
                 }
 
                 chunk = (void*)chunk + chunk->size;
@@ -1098,7 +1084,7 @@ int main() {
         if (false) {
             i32 tempStrPitch = (canvas.w + 3);
             i32 tempStrLen = tempStrPitch * (canvas.h + 2);
-            char* tempStr = arenaAllocArray(arena, char, tempStrLen);
+            char* tempStr = ((Str)arenaAllocArray(arena, char, tempStrLen)).ptr;
             memset(tempStr, '+', tempStrLen);
             tempStr = tempStr + tempStrPitch + 1;
             for (i32 rowIndex = -1; rowIndex <= canvas.h; rowIndex++) {
@@ -1114,10 +1100,10 @@ int main() {
             writeEntireFile(arena, STR("temp.txt"), tempStr - tempStrPitch - 1, tempStrLen);
         }
 
-        V2arrarr stage = {.ptr = collisionPolys.ptr + collisionPolys.len};
+        V2sliceslice stage = {.ptr = collisionPolys.ptr + collisionPolys.len};
         i64 collisionPolysLenBefore = collisionPolys.len;
 
-        bool* pixelsTouched = arenaAllocAndZeroArray(arena, bool, (canvas.w + 1) * (canvas.h + 1));
+        u8slice pixelsTouched = arenaAllocAndZeroArray(arena, u8, (canvas.w + 1) * (canvas.h + 1));
         i32 pixelsTouchedPitch = canvas.w + 1;
         for (bool allPixelsTouched = false; !allPixelsTouched;) {
             allPixelsTouched = true;
@@ -1125,7 +1111,7 @@ int main() {
             CornerInfo firstCorner = {};
             for (i32 rowEdge = 0; rowEdge <= canvas.h; rowEdge += 1) {
                 for (i32 colEdge = 0; colEdge <= canvas.w; colEdge += 1) {
-                    bool* touchedBefore = pixelsTouched + rowEdge * pixelsTouchedPitch + colEdge;
+                    u8* touchedBefore = pixelsTouched.ptr + rowEdge * pixelsTouchedPitch + colEdge;
                     if (!*touchedBefore) {
                         *touchedBefore = true;
                         allPixelsTouched = false;
@@ -1143,11 +1129,11 @@ int main() {
             if (firstCorner.isCorner) {
                 assert(!allPixelsTouched);
 
-                V2arr collisionPoly = {.ptr = collisionPoints.ptr + collisionPoints.len};
+                V2slice collisionPoly = {.ptr = collisionPoints.ptr + collisionPoints.len};
                 i32 collisionPointsLenBeforeShapeWalk = collisionPoints.len;
                 for (CornerInfo currentCorner = firstCorner;;) {
                     V2 currentCornerPosWorld = {currentCorner.pos.x, canvas.h - currentCorner.pos.y};
-                    arrpush(collisionPoints, currentCornerPosWorld);
+                    dynarrpush(&collisionPoints, currentCornerPosWorld);
 
                     CornerInfo nextCorner;
                     i32 rowEdge = currentCorner.pos.y;
@@ -1158,7 +1144,7 @@ int main() {
                         assert(rowEdge >= 0 && rowEdge <= canvas.h);
                         assert(colEdge >= 0 && colEdge <= canvas.w);
 
-                        bool* touchedBefore = pixelsTouched + rowEdge * pixelsTouchedPitch + colEdge;
+                        u8* touchedBefore = pixelsTouched.ptr + rowEdge * pixelsTouchedPitch + colEdge;
                         if (*touchedBefore) {
                             assert(v2ieq((V2i) {colEdge, rowEdge}, firstCorner.pos));
                             goto breakShapeWalk;
@@ -1180,46 +1166,45 @@ int main() {
                 breakShapeWalk:
 
                 collisionPoly.len = collisionPoints.len - collisionPointsLenBeforeShapeWalk;
-                arrpush(collisionPolys, collisionPoly);
+                dynarrpush(&collisionPolys, collisionPoly);
             }
         }
 
         stage.len = collisionPolys.len - collisionPolysLenBefore;
-        arrpush(stages, stage);
+        dynarrpush(&stages, stage);
     }
 
     assert(atlasTextures.len == atlasTextures.cap);
 
     Texture atlas = {};
     {
-        stbrp_rect* rectsToPack = arenaAllocArray(arena, stbrp_rect, atlasTextures.len);
+        struct {stbrp_rect* ptr; i64 len;} rectsToPack = arenaAllocArray(arena, stbrp_rect, atlasTextures.len);
         for (i32 texInd = 0; texInd < atlasTextures.len; texInd++) {
             Texture* texture = atlasTextures.ptr + texInd;
-            stbrp_rect* rect = rectsToPack + texInd;
+            stbrp_rect* rect = rectsToPack.ptr + texInd;
             rect->id = texInd;
             rect->w = texture->w + 2;
             rect->h = texture->h + 2;
         }
 
         {
-            struct {stbrp_node* ptr; i32 len;} nodes = {.len = 4096};
-            nodes.ptr = arenaAllocArray(arena, stbrp_node, nodes.len);
+            struct {stbrp_node* ptr; i32 len;} nodes = arenaAllocArray(arena, stbrp_node, 4096);
             stbrp_context ctx = {};
             stbrp_init_target(&ctx, nodes.len, INT_MAX, nodes.ptr, nodes.len);
-            int allRectsPacked = stbrp_pack_rects(&ctx, rectsToPack, atlasTextures.len);
+            int allRectsPacked = stbrp_pack_rects(&ctx, rectsToPack.ptr, rectsToPack.len);
             assert(allRectsPacked);
         }
 
         for (i32 texInd = 0; texInd < atlasTextures.len; texInd++) {
-            stbrp_rect* rect = rectsToPack + texInd;
+            stbrp_rect* rect = rectsToPack.ptr + texInd;
             assert(rect->was_packed);
             atlas.w = max(atlas.w, rect->x + rect->w);
             atlas.h = max(atlas.h, rect->y + rect->h);
         }
-        atlas.pixels = arenaAllocArray(arena, u32, atlas.w * atlas.h);
+        atlas.pixels = ((u32slice) arenaAllocArray(arena, u32, atlas.w * atlas.h)).ptr;
 
         for (i32 texInd = 0; texInd < atlasTextures.len; texInd++) {
-            stbrp_rect* rect = rectsToPack + texInd;
+            stbrp_rect* rect = rectsToPack.ptr + texInd;
             Texture* texture = atlasTextures.ptr + rect->id;
 
             for (i32 texRow = 0; texRow < texture->h; texRow++) {
@@ -1228,16 +1213,14 @@ int main() {
                 memcpy(dest, src, texture->w * sizeof(u32));
             }
 
-            AtlasLocation* loc = atlasLocations + texInd;
+            AtlasLocation* loc = atlasLocations.ptr + texInd;
             loc->rect = (Rect) {{rect->x, rect->y}, {rect->w, rect->h}};
         }
     }
 
     strbuilderEnumBegin(strbuilder, STR("ShaderID"));
-    struct {u8arr* ptr; i32 len, cap;} shaders = {.cap = 1024};
-    shaders.ptr = arenaAllocArray(arena, u8arr, shaders.cap);
-    struct {u8* ptr; i64 len, cap;} allShaderData = {.cap = 50 * Megabyte};
-    allShaderData.ptr = arenaAllocArray(arena, u8, allShaderData.cap);
+    struct {u8slice* ptr; i32 len, cap;} shaders = arenaAllocDynarr(arena, u8slice, 1024);
+    struct {u8* ptr; i64 len, cap;} allShaderData = arenaAllocDynarr(arena, u8, 50 * Megabyte);
     {
         WIN32_FIND_DATAA findData = {};
         HANDLE findHandle = FindFirstFileA("code/*.hlsl", &findData);
@@ -1246,10 +1229,10 @@ int main() {
             Str shaderFilename = strfmt(arena, "%s", findData.cFileName);
             Str shaderSrcPath = strfmt(arena, "code/%.*s", LIT(shaderFilename));
 
-            u8arr shaderSrc = readEntireFile(arena, shaderSrcPath);
+            u8slice shaderSrc = readEntireFile(arena, shaderSrcPath);
             Str entryPoints[] = {STR("vs"), STR("ps")};
             UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-            for (u32 entryPointIndex = 0; entryPointIndex < arrayCount(entryPoints); entryPointIndex++) {
+            for (u32 entryPointIndex = 0; entryPointIndex < carrayCount(entryPoints); entryPointIndex++) {
                 Str entryPoint = entryPoints[entryPointIndex];
                 ID3DBlob* vblob = 0;
                 ID3DBlob* error = 0;
@@ -1260,10 +1243,10 @@ int main() {
                     writeToStdout(message);
                     assert(!"failed to compile");
                 }
-                u8arr shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
-                u8arr shaderDataCopy = {allShaderData.ptr + allShaderData.len, shaderDataOg.len};
-                arrpusharr(allShaderData, shaderDataOg);
-                arrpush(shaders, shaderDataCopy);
+                u8slice shaderDataOg = {ID3D10Blob_GetBufferPointer(vblob), ID3D10Blob_GetBufferSize(vblob)};
+                u8slice shaderDataCopy = {allShaderData.ptr + allShaderData.len, shaderDataOg.len};
+                dynarrpusharr(&allShaderData, shaderDataOg);
+                dynarrpush(&shaders, shaderDataCopy);
                 Str fileNameNoExt = strslice(shaderFilename, 0, shaderFilename.len - (sizeof(".hlsl") - 1));
                 Str enumLabel = strfmt(arena, "%.*s_%.*s", LIT(fileNameNoExt), LIT(entryPoint));
                 strbuilderEnumAdd(strbuilder, enumLabel);
@@ -1274,11 +1257,8 @@ int main() {
     strbuilderEnumAdd(strbuilder, STR("Count"));
     strbuilderEnumEnd(strbuilder);
 
-    BinBuilder binb = {.cap = 50 * Megabyte};
-    binb.ptr = arenaAllocArray(arena, u8, binb.cap);
-
-    AssetDataBuilder datab_ = {.bin = &binb, .str = strbuilder, .ptrfixes.cap = 1024};
-    datab_.ptrfixes.ptr = arenaAllocArray(arena, PtrFix, datab_.ptrfixes.cap);
+    BinBuilder binb = arenaAllocDynarr(arena, u8, 50 * Megabyte);
+    AssetDataBuilder datab_ = {.bin = &binb, .str = strbuilder, .ptrfixes = arenaAllocDynarr(arena, PtrFix, 1024)};
     AssetDataBuilder* datab = &datab_;
 
     assetBeginData(datab);
@@ -1295,7 +1275,7 @@ int main() {
     assetAddField(datab, "int w", atlas.w);
     assetAddField(datab, "int h", atlas.h);
     assetAddArrField(datab, "unsigned int pixels", atlas.pixels, atlas.w * atlas.h);
-    assetAddArrField(datab, "AtlasLocation locations", atlasLocations, totalAtlasTextureCount);
+    assetAddArrField(datab, "AtlasLocation locations", atlasLocations.ptr, totalAtlasTextureCount);
     assetEndStruct(datab, STR("atlas"));
 
     assetAddArrOfArr(arena, datab, "animations", "f32", animations, allAnimationDurations);

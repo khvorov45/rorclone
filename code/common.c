@@ -20,32 +20,47 @@
 #define assert(cond) do { if (cond) {} else __debugbreak(); } while (0)
 #endif
 
+#define unimplemented() __debugbreak()
+#define assertStrInArena(str, arena) assert((u64)(str).ptr >= (u64)(arena)->base && (u64)(str).ptr + (u64)(str).len <= (u64)(arena)->base + (u64)(arena)->size);
 #define STRINGIFY_(x) #x
 #define STRINGIFY(x) STRINGIFY_(x)
 #define STR(x) ((Str){x, sizeof(x) - 1})
 #define LIT(x) (int)x.len, x.ptr
 #define absval(x) ((x) < 0 ? -(x) : x)
 #define unused(x) ((x) = (x))
-#define arrayCount(x) (sizeof(x) / sizeof((x)[0]))
-#define arrpush(arr, val) assert((arr).len < (arr).cap); (arr).ptr[(arr).len++] = (val)
-#define arrpusharr(arr, val) assert((arr).len + (val).len <= (arr).cap); memcpy((arr).ptr + (arr).len, (val).ptr, (val).len * sizeof(*(val).ptr)); (arr).len += (val).len
-#define arenaAllocArray(arena, type, count) ((type*)arenaAlloc((arena), sizeof(type) * (count)))
-#define arenaAllocAndZeroArray(arena, type, count) ((type*)arenaAllocAndZero((arena), sizeof(type) * (count)))
+#define carrayCount(x) (sizeof(x) / sizeof((x)[0]))
+#define dynarrpush(arr, val) assert((arr)->len < (arr)->cap); (arr)->ptr[(arr)->len++] = (val)
+#define dynarrpusharr(arr, val) assert((arr)->len + (val).len <= (arr)->cap); memcpy((arr)->ptr + (arr)->len, (val).ptr, (val).len * sizeof(*(val).ptr)); (arr)->len += (val).len
+#define slicefromcarray(carr) {.ptr = carr, .len = carrayCount(carr)}
+#define arenaAllocOne(arena, type) (type*)arenaAllocBytes((arena), sizeof(type))
+#define arenaAllocAndZeroOne(arena, type) (type*)arenaAllocAndZeroBytes((arena), sizeof(type))
+#define arenaAllocArray(arena, type, count) {.ptr = (type*)arenaAllocBytes((arena), sizeof(type) * (count)), .len = (count)}
+#define arenaAllocAndZeroArray(arena, type, count) {.ptr = (type*)arenaAllocAndZeroBytes((arena), sizeof(type) * (count)), .len = (count)}
+#define arenaAllocDynarr(arena, type, capacity) {.ptr = (type*)arenaAllocBytes((arena), sizeof(type) * (capacity)), .len = 0, .cap = (capacity)}
+#define arenaAllocAndZeroDynarr(arena, type, capacity) {.ptr = (type*)arenaAllocAndZeroBytes((arena), sizeof(type) * (capacity)), .len = 0, .cap = (capacity)}
 #define tempMemoryBlock(arena_) for (TempMemory _temp_ = beginTempMemory(arena_); _temp_.arena; endTempMemory(&_temp_))
 
-typedef int8_t   i8;
-typedef uint8_t  u8;
-typedef int16_t  i16;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+typedef uint8_t u8;
 typedef uint16_t u16;
-typedef int32_t  i32;
 typedef uint32_t u32;
-typedef int64_t  i64;
 typedef uint64_t u64;
-typedef float    f32;
-typedef double   f64;
+typedef float f32;
+typedef double f64;
 
-typedef struct {u8* ptr; i64 len;} u8arr;
-typedef struct {f32* ptr; i64 len;} f32arr;
+typedef struct i8slice {i8* ptr; i64 len;} i8slice;
+typedef struct i16slice {i16* ptr; i64 len;} i16slice;
+typedef struct i32slice {i32* ptr; i64 len;} i32slice;
+typedef struct i64slice {i64* ptr; i64 len;} i64slice;
+typedef struct u8slice {u8* ptr; i64 len;} u8slice;
+typedef struct u16slice {u16* ptr; i64 len;} u16slice;
+typedef struct u32slice {u32* ptr; i64 len;} u32slice;
+typedef struct u64slice {u64* ptr; i64 len;} u64slice;
+typedef struct f32slice {f32* ptr; i64 len;} f32slice;
+typedef struct f64slice {f64* ptr; i64 len;} f64slice;
 
 //
 // SECTION Memory
@@ -60,17 +75,25 @@ typedef struct Arena {
 static i64 arenaFreesize(Arena* arena) { return arena->size - arena->used;}
 static void* arenaFreeptr(Arena* arena) { return arena->base + arena->used;}
 
-static void* arenaAlloc(Arena* arena, i64 size) {
+static void* arenaAllocBytes(Arena* arena, i64 size) {
     assert(arenaFreesize(arena) >= size);
     void* result = arenaFreeptr(arena);
     arena->used += size;
     return result;
 }
 
-static void* arenaAllocAndZero(Arena* arena, i64 size) {
-    void* ptr = arenaAlloc(arena, size);
+static void* arenaAllocAndZeroBytes(Arena* arena, i64 size) {
+    void* ptr = arenaAllocBytes(arena, size);
     memset(ptr, 0, size);
     return ptr;
+}
+
+static Arena arenaFromArena(Arena* arena, i64 size) {
+    Arena result = {
+        .base = arenaAllocBytes(arena, size),
+        .size = size,
+    };
+    return result;
 }
 
 typedef struct TempMemory {
@@ -89,6 +112,13 @@ static void endTempMemory(TempMemory* temp) {
     assert(temp->usedBefore <= temp->arena->used);
     assert(temp->tempBefore == temp->arena->tempCount - 1);
     temp->arena->used = temp->usedBefore;
+    temp->arena->tempCount -= 1;
+    *temp = (TempMemory) {};
+}
+
+static void keepTempMemory(TempMemory* temp) {
+    assert(temp->usedBefore <= temp->arena->used);
+    assert(temp->tempBefore == temp->arena->tempCount - 1);
     temp->arena->tempCount -= 1;
     *temp = (TempMemory) {};
 }
@@ -157,8 +187,8 @@ static f32 squareRoot(f32 x) {
 
 typedef struct V2i { i32 x, y; } V2i;
 typedef struct V2 { f32 x, y; } V2;
-typedef struct V2arr {V2* ptr; i64 len;} V2arr;
-typedef struct V2arrarr {V2arr* ptr; i64 len;} V2arrarr;
+typedef struct V2slice {V2* ptr; i64 len;} V2slice;
+typedef struct V2sliceslice {V2slice* ptr; i64 len;} V2sliceslice;
 static V2 v2fromf32(f32 x) {return (V2) {x, x};}
 static V2 v2add(V2 a, V2 b) {return (V2) {.x = a.x + b.x, .y = a.y + b.y};}
 static V2 v2sub(V2 a, V2 b) {return (V2) {.x = a.x - b.x, .y = a.y - b.y};}
