@@ -1,5 +1,6 @@
 temp*
 .vscode
+.zed
 code/*hlsl_*
 .vs
 *.sln
@@ -7,3 +8,4 @@ code/*hlsl_*
 *.png
 *.bin
 raddbg*
+compile_flags.txt
