@@ -94,7 +94,7 @@ static V2 worldToScreenV2(V2 pos, V2 cameraPos, f32 spriteScaleMultiplier, i32 w
     V2 posCamera = v2sub(pos, cameraPos);
     V2 posPxFromCenter = v2scale(posCamera, spriteScaleMultiplier);
     posPxFromCenter.y *= -1;
-    V2 windowHalfDim = {windowW / 2, windowH / 2};
+    V2 windowHalfDim = {(f32)windowW / 2.0f, (f32)windowH / 2.0f};
     V2 posScr = v2add(posPxFromCenter, windowHalfDim);
     return posScr;
 }
@@ -287,7 +287,7 @@ static void gameUpdateAndRender(Game* game, Input* input, f32 msSinceLastUpdate)
             }
         }
     }
-    
+
     // TODO(khvorov) Temp collision shape drawing
     Rect collision = game->assets->entities.collision[sprite->entity];
     drawRect(game, (Rect) {v2add(sprite->common.topleft, collision.topleft), collision.dim}, (V4) {.r = 1, .b = 1, .a = 0.25});
