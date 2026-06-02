@@ -409,7 +409,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     d3d11.cbuffer = d3d11CreateDynBuffer(d3d11.device, sizeof(CBuffer), D3D11_BIND_CONSTANT_BUFFER);
 
     ShowWindow(window.hwnd, SW_SHOWDEFAULT);
-    
+
     Input input = {};
 
     LARGE_INTEGER performanceFrequencyPerSecond = {};
