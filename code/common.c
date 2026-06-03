@@ -137,6 +137,12 @@ typedef struct Str {
     char* ptr;
     i64 len;
 } Str;
+
+typedef struct Strs {
+    Str* ptr;
+    i64 len;
+} Strs;
+
 static Str strslice(Str str, i64 start, i64 end) {return (Str) {str.ptr + start, end - start};}
 
 __attribute__((format(printf,2,3)))
