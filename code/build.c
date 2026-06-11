@@ -474,19 +474,6 @@ static int fileInfoStageCmp(const void* val1_, const void* val2_) {
     return result;
 }
 
-static u64 getClock(void) {
-    LARGE_INTEGER buildProgramStart = {};
-    QueryPerformanceCounter(&buildProgramStart);
-    return buildProgramStart.QuadPart;
-}
-
-static f32 getMsFrom(u64 before, LARGE_INTEGER freqPerSec) {
-    u64 now = getClock();
-    u64 diff = now - before;
-    f32 ms = (f32)diff / (f32)freqPerSec.QuadPart * 1000.0f;
-    return ms;
-}
-
 static u64 parseUint(Str str) {
     u64 result = 0;
     u64 scale = 1;
@@ -798,11 +785,43 @@ static void tests() {
 }
 
 //
+// SECTION Timer
+//
+
+static u64 getClock(void) {
+    LARGE_INTEGER buildProgramStart = {};
+    QueryPerformanceCounter(&buildProgramStart);
+    return buildProgramStart.QuadPart;
+}
+
+typedef struct Timer {
+    u64 startTime;
+    u64 performanceFrequencyPerSec;
+} Timer;
+
+static Timer startTimer() {
+    LARGE_INTEGER performanceFrequencyPerSec = {};
+    QueryPerformanceFrequency(&performanceFrequencyPerSec);
+    Timer timer = {
+        .performanceFrequencyPerSec = performanceFrequencyPerSec.QuadPart,
+        .startTime = getClock(),
+    };
+    return timer;
+}
+
+static f32 getMsFromStart(Timer* timer) {
+    u64 now = getClock();
+    u64 diff = now - timer->startTime;
+    f32 ms = (f32)diff / (f32)timer->performanceFrequencyPerSec * 1000.0f;
+    return ms;
+}
+
+//
 // SECTION Main
 //
 
 int main() {
-    u64 buildProgramStart = getClock();
+    Timer timer = startTimer();
 
     LARGE_INTEGER performanceFrequencyPerSec = {};
     QueryPerformanceFrequency(&performanceFrequencyPerSec);
@@ -1491,6 +1510,6 @@ int main() {
 
     writeEntireFile(arena, STR("build/rorclone.dat"), binb.ptr, binb.len);
 
-    writeToStdout(strfmt(arena, "finished in %.1fms\n", getMsFrom(buildProgramStart, performanceFrequencyPerSec)));
+    writeToStdout(strfmt(arena, "finished in %.1fms\n", getMsFromStart(&timer)));
     return 0;
 }
