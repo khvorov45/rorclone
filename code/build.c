@@ -823,9 +823,6 @@ static f32 getMsFromStart(Timer* timer) {
 int main() {
     Timer timer = startTimer();
 
-    LARGE_INTEGER performanceFrequencyPerSec = {};
-    QueryPerformanceFrequency(&performanceFrequencyPerSec);
-
     Arena arena_ = {.size = Gigabyte};
     arena_.base = VirtualAlloc(0, arena_.size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     assert(arena_.base);
