@@ -292,4 +292,3 @@ static void gameUpdateAndRender(Game* game, Input* input, f32 msSinceLastUpdate)
     Rect collision = game->assets->entities.collision[sprite->entity];
     drawRect(game, (Rect) {v2add(sprite->common.topleft, collision.topleft), collision.dim}, (V4) {.r = 1, .b = 1, .a = 0.25});
 }
-
