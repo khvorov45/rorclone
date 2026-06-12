@@ -201,6 +201,14 @@ static bool strstarts(Str str, Str start) {
     return result;
 }
 
+static bool strends(Str str, Str end) {
+    bool result = false;
+    if (str.len >= end.len) {
+        result = memeq(str.ptr + str.len - end.len, end.ptr, end.len);
+    }
+    return result;
+}
+
 //
 // SECTION Misc
 //
