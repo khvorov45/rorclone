@@ -1,6 +1,6 @@
 // Extracts assets from source files and packs them into an asset file the game uses
 // NOTE: All packed textures have a 1px border around them, as a result there is a 2px gap between all textures
-// Compiles the game
+// Compiles the game, the tests and the bench
 
 #include "common.c"
 
@@ -181,8 +181,114 @@ static Texture aseDecodeTextureFromCel(Arena* arena, AseChunk* chunk) {
 }
 
 //
-// SECTION Misc
+// SECTION Raw asset processing
 //
+
+typedef struct FileInfoStage {
+    i32 index, variant;
+    AseFile* content;
+} FileInfoStage;
+
+typedef struct FileInfoEntity {
+    struct {Str entity, animation, file;} names;
+    AseFile* content;
+} FileInfoEntity;
+
+static int fileInfoEntityCmp(const void* val1_, const void* val2_) {
+    Str val1 = ((FileInfoEntity*)val1_)->names.file;
+    Str val2 = ((FileInfoEntity*)val2_)->names.file;
+    int result = strncmp(val1.ptr, val2.ptr, min(val1.len, val2.len));
+    return result;
+}
+
+static int fileInfoStageCmp(const void* val1_, const void* val2_) {
+    FileInfoStage* val1 = ((FileInfoStage*)val1_);
+    FileInfoStage* val2 = ((FileInfoStage*)val2_);
+    int result = val1->index - val2->index;
+    if (result == 0) {
+        result = val1->variant - val2->variant;
+    }
+    return result;
+}
+
+static u64 parseUint(Str str) {
+    u64 result = 0;
+    u64 scale = 1;
+    for (i32 ind = str.len - 1; ind >= 0; ind--) {
+        char ch = str.ptr[ind];
+        assert(ch <= '9' && ch >= '0');
+        u64 chNumber = ch - '0';
+        u64 chNumberScaled = chNumber * scale;
+        result += chNumberScaled;
+        scale *= 10;
+    }
+    return result;
+}
+
+typedef struct CornerInfo {
+    bool isCorner;
+    V2i pos;
+    V2i nextDir;
+} CornerInfo;
+
+static CornerInfo getCornerInfo(i32 rowEdge, i32 colEdge, i32 canvasPitch, Texture canvas) {
+    i32 pxIndexTopLeft = (rowEdge - 1) * canvasPitch + (colEdge - 1);
+    i32 pxIndexTopRight = pxIndexTopLeft + 1;
+    i32 pxIndexBottomLeft = pxIndexTopLeft + canvasPitch;
+    i32 pxIndexBottomRight = pxIndexBottomLeft + 1;
+
+    u32 pxValueTopLeft = canvas.pixels[pxIndexTopLeft];
+    u32 pxValueTopRight = canvas.pixels[pxIndexTopRight];
+    u32 pxValueBottomLeft = canvas.pixels[pxIndexBottomLeft];
+    u32 pxValueBottomRight = canvas.pixels[pxIndexBottomRight];
+
+    bool pxFilledTopLeft = pxValueTopLeft != 0;
+    bool pxFilledTopRight = pxValueTopRight != 0;
+    bool pxFilledBottomLeft = pxValueBottomLeft != 0;
+    bool pxFilledBottomRight = pxValueBottomRight != 0;
+
+    bool isCornerTopLeft = (pxFilledBottomLeft == pxFilledBottomRight && pxFilledBottomLeft == pxFilledTopRight) && (pxFilledBottomLeft != pxFilledTopLeft);
+    bool isCornerTopRight = (pxFilledBottomLeft == pxFilledBottomRight && pxFilledBottomLeft == pxFilledTopLeft) && (pxFilledBottomLeft != pxFilledTopRight);
+    bool isCornerBottomLeft = (pxFilledTopLeft == pxFilledTopRight && pxFilledTopLeft == pxFilledBottomRight) && (pxFilledTopLeft != pxFilledBottomLeft);
+    bool isCornerBottomRight = (pxFilledTopLeft == pxFilledTopRight && pxFilledTopLeft == pxFilledBottomLeft) && (pxFilledTopLeft != pxFilledBottomRight);
+    bool isCorner = isCornerBottomLeft || isCornerTopLeft || isCornerBottomRight || isCornerTopRight;
+
+    // TODO(khvorov) Do we need to handle double corner situations?
+    assert(isCornerTopLeft + isCornerTopRight + isCornerBottomLeft + isCornerBottomRight <= 1);
+
+    CornerInfo result = {};
+    if (isCorner) {
+        result.isCorner = true;
+        result.pos = (V2i) {colEdge, rowEdge};
+
+        if (isCornerBottomRight) {
+            if (!pxFilledBottomRight) {
+                result.nextDir.y = 1;
+            } else {
+                result.nextDir.x = 1;
+            }
+        } else if (isCornerBottomLeft) {
+            if (!pxFilledBottomLeft) {
+                result.nextDir.x = -1;
+            } else {
+                result.nextDir.y = 1;
+            }
+        } else if (isCornerTopLeft) {
+            if (!pxFilledTopLeft) {
+                result.nextDir.y = -1;
+            } else {
+                result.nextDir.x = -1;
+            }
+        } else if (isCornerTopRight) {
+            if (!pxFilledTopRight) {
+                result.nextDir.x = 1;
+            } else {
+                result.nextDir.y = -1;
+            }
+        }
+    }
+    return result;
+}
 
 typedef enum LayerTypeInfo {
     LayerTypeInfo_None,
@@ -194,58 +300,41 @@ static V2 adjustRefpoint(V2 refpoint, V2 firstFrameArtOffset) {
     return result;
 }
 
-static char capitalize(char ch) {return ch - ('a' - 'A');}
-
-typedef struct StrBuilder {
-    char* ptr;
-    i64 len;
-    i64 cap;
+typedef struct AssetStructBuilder {
+    StrBuilder strb;
     Str currentName;
     i64 addCount;
-} StrBuilder;
+} AssetStructBuilder;
 
-__attribute__((format(printf,2,3)))
-static void strbuilderfmt(StrBuilder* builder, char* fmt, ...) {
-    char* out = builder->ptr + builder->len;
-    i64 size = builder->cap - builder->len;
-
-    va_list va;
-    va_start(va, fmt);
-    int printResult = stbsp_vsnprintf(out, size, fmt, va);
-    va_end(va);
-
-    builder->len += printResult;
-}
-
-static void strbuilderEnumBegin(StrBuilder* builder, Str name) {
-    strbuilderfmt(builder, "typedef enum %.*s {\n", LIT(name));
+static void strbuilderEnumBegin(AssetStructBuilder* builder, Str name) {
+    append(&builder->strb, "typedef enum %.*s {\n", LIT(name));
     builder->currentName = name;
     builder->addCount = 0;
 }
 
-static void strbuilderEnumAdd(StrBuilder* builder, Str name) {
-    strbuilderfmt(builder, "    %.*s_%.*s,\n", LIT(builder->currentName), LIT(name));
+static void strbuilderEnumAdd(AssetStructBuilder* builder, Str name) {
+    append(&builder->strb, "    %.*s_%.*s,\n", LIT(builder->currentName), LIT(name));
     builder->addCount += 1;
 }
 
-static void strbuilderEnumEnd(StrBuilder* builder) {
-    strbuilderfmt(builder, "} %.*s;\n\n", LIT(builder->currentName));
+static void strbuilderEnumEnd(AssetStructBuilder* builder) {
+    append(&builder->strb, "} %.*s;\n\n", LIT(builder->currentName));
     builder->currentName = (Str) {};
     builder->addCount = 0;
 }
 
-static void strbuilderTableBegin(StrBuilder* builder, Str type, Str name, Str entryCount) {
-    strbuilderfmt(builder, "static const %.*s %.*s[%.*s] = {\n", LIT(type), LIT(name), LIT(entryCount));
+static void strbuilderTableBegin(AssetStructBuilder* builder, Str type, Str name, Str entryCount) {
+    append(&builder->strb, "static const %.*s %.*s[%.*s] = {\n", LIT(type), LIT(name), LIT(entryCount));
     builder->addCount = 0;
 }
 
-static void builderTableAdd(StrBuilder* builder, Str key, Str value) {
-    strbuilderfmt(builder, "    [%.*s] = %.*s,\n", LIT(key), LIT(value));
+static void builderTableAdd(AssetStructBuilder* builder, Str key, Str value) {
+    append(&builder->strb, "    [%.*s] = %.*s,\n", LIT(key), LIT(value));
     builder->addCount += 1;
 }
 
-static void strbuilderTableEnd(StrBuilder* builder) {
-    strbuilderfmt(builder, "};\n\n");
+static void strbuilderTableEnd(AssetStructBuilder* builder) {
+    append(&builder->strb, "};\n\n");
     builder->addCount = 0;
 }
 
@@ -271,67 +360,67 @@ typedef struct PtrFix {
 
 typedef struct AssetDataBuilder {
     BinBuilder* bin;
-    StrBuilder* str;
+    AssetStructBuilder* str;
     i32 currentIndLevel;
     struct {PtrFix* ptr; i32 len, cap;} ptrfixes;
 } AssetDataBuilder;
 
 static void assetIndent(AssetDataBuilder* datab) {
     for (i32 ind = 0; ind < datab->currentIndLevel; ind++) {
-        strbuilderfmt(datab->str, "    ");
+        append(&datab->str->strb, "    ");
     }
 }
 
 static void assetBeginData(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "#pragma pack(push)\n#pragma pack(1)\ntypedef struct AssetData {\n");
+    append(&datab->str->strb, "#pragma pack(push)\n#pragma pack(1)\ntypedef struct AssetData {\n");
     datab->currentIndLevel += 1;
 }
 
 static void assetEndData(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "} AssetData;\n#pragma pack(pop)\n\n");
+    append(&datab->str->strb, "} AssetData;\n#pragma pack(pop)\n\n");
     datab->currentIndLevel -= 1;
 }
 
 static void assetBeginStruct(AssetDataBuilder* datab) {
     assetIndent(datab);
-    strbuilderfmt(datab->str, "struct {\n");
+    append(&datab->str->strb, "struct {\n");
     datab->currentIndLevel += 1;
 }
 
 static void assetEndStruct(AssetDataBuilder* datab, Str name) {
     datab->currentIndLevel -= 1;
     assetIndent(datab);
-    strbuilderfmt(datab->str, "} %.*s;\n", LIT(name));
+    append(&datab->str->strb, "} %.*s;\n", LIT(name));
 }
 
 #define assetAddField(Datab, Name, Val) assetAddField_(Datab, STR(Name), &(Val), sizeof(Val))
 static void assetAddField_(AssetDataBuilder* datab, Str name, void* data, i64 dataLen) {
     assetIndent(datab);
-    strbuilderfmt(datab->str, "%.*s;\n", LIT(name));
+    append(&datab->str->strb, "%.*s;\n", LIT(name));
     binWrite_(datab->bin, data, dataLen);
 }
 
 #define assetAddArrField(Datab, Name, Data, Count) assetAddArrField_(Datab, STR(Name), Data, sizeof(*Data), Count)
 static void assetAddArrField_(AssetDataBuilder* datab, Str name, void* data, i64 elementSize, i32 elementCount) {
     assetIndent(datab);
-    strbuilderfmt(datab->str, "%.*s[%d];\n", LIT(name), elementCount);
+    append(&datab->str->strb, "%.*s[%d];\n", LIT(name), elementCount);
     binWrite_(datab->bin, data, elementCount * elementSize);
 }
 
 static void assetBeginProc(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "static void assetDataAfterLoad(AssetData* adata) {\n");
+    append(&datab->str->strb, "static void assetDataAfterLoad(AssetData* adata) {\n");
     datab->currentIndLevel += 1;
 }
 
 static void assetEndProc(AssetDataBuilder* datab) {
-    strbuilderfmt(datab->str, "}\n");
+    append(&datab->str->strb, "}\n");
     datab->currentIndLevel -= 1;
 }
 
 static void assetAddPtrFixLoop(AssetDataBuilder* datab, i32 count, Str arrName, Str elName, Str elParentName) {
     assetIndent(datab);
     // NOTE(khvorov) Pointers are offsets (in elements) from the base of allData, so make them into actual pointers by adding the base of allData
-    strbuilderfmt(datab->str,
+    append(&datab->str->strb,
         "for (u32 ind = 0; ind < %d; ind++) {"
         "adata->%.*s.%.*s[ind].ptr = adata->%.*s.%.*s + (u64)adata->%.*s.%.*s[ind].ptr;"
         "}\n", count, LIT(arrName), LIT(elName), LIT(arrName), LIT(elParentName), LIT(arrName), LIT(elName)

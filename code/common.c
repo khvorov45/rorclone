@@ -133,6 +133,8 @@ static bool memeq(void* ptr1, void* ptr2, i64 len) {
 // SECTION String
 //
 
+static char capitalize(char ch) {return ch - ('a' - 'A');}
+
 typedef struct Str {
     char* ptr;
     i64 len;
@@ -145,17 +147,41 @@ typedef struct Strs {
 
 static Str strslice(Str str, i64 start, i64 end) {return (Str) {str.ptr + start, end - start};}
 
-__attribute__((format(printf,2,3)))
-static Str strfmt(Arena* arena, char* fmt, ...) {
-    char* out = arenaFreeptr(arena);
+typedef struct StrBuilder {
+    char* ptr;
+    i64 len;
+    i64 cap;
+} StrBuilder;
 
+static void append_(StrBuilder* builder, char* fmt, va_list args) {
+    char* out = builder->ptr + builder->len;
+    i64 size = builder->cap - builder->len;
+    int printResult = stbsp_vsnprintf(out, size, fmt, args);
+    builder->len += printResult;
+}
+
+__attribute__((format(printf,2,3)))
+static void append(StrBuilder* builder, char* fmt, ...) {
     va_list va;
     va_start(va, fmt);
-    int printResult = stbsp_vsnprintf(out, arenaFreesize(arena), fmt, va);
+    append_(builder, fmt, va);
     va_end(va);
+}
 
-    arena->used += printResult + 1;
+static Str strfmt_(Arena* arena, char* fmt, va_list args) {
+    char* out = arenaFreeptr(arena);
+    int printResult = stbsp_vsnprintf(out, arenaFreesize(arena), fmt, args);
+    arena->used += printResult + 1; // NOTE: null terminator
     Str result = {out, printResult};
+    return result;
+}
+
+__attribute__((format(printf,2,3)))
+static Str strfmt(Arena* arena, char* fmt, ...) {
+    va_list va;
+    va_start(va, fmt);
+    Str result = strfmt_(arena, fmt, va);
+    va_end(va);
     return result;
 }
 
