@@ -77,6 +77,8 @@ static void writeToStdout(Str msg) {WriteFile((HANDLE)STD_OUTPUT_HANDLE, msg.ptr
 // SECTION Process creation
 //
 
+static HANDLE globalProcessHandles[128];
+static u64 globalProcessHandlesCount;
 static void executeCommandLine(Str cmd) {
     writeToStdout(cmd);
     writeToStdout(STR("\n"));
@@ -84,12 +86,8 @@ static void executeCommandLine(Str cmd) {
     PROCESS_INFORMATION procInfo = {};
     BOOL CreateProcessResult = CreateProcessA(0, cmd.ptr, 0, 0, TRUE, 0, 0, 0, &startupInfo, &procInfo);
     assert(CreateProcessResult);
-    DWORD WaitForSingleObjectResult = WaitForSingleObject(procInfo.hProcess, INFINITE);
-    assert(WaitForSingleObjectResult == WAIT_OBJECT_0);
-    DWORD exitCode = 0;
-    BOOL GetExitCodeProcessResult = GetExitCodeProcess(procInfo.hProcess, &exitCode);
-    assert(GetExitCodeProcessResult);
-    assert(exitCode == 0);
+    assert(globalProcessHandlesCount <= carrayCount(globalProcessHandles));
+    globalProcessHandles[globalProcessHandlesCount++] = procInfo.hProcess;
 }
 
 //
@@ -187,6 +185,15 @@ int main() {
 
     Platform platform = {.writeEntireFile = writeEntireFile, .executeCommandLine = executeCommandLine};
     build(arena, (DataFiles*)&dataFiles, (PlatformShaders*)&platformShaders, STR("game_windows"), platform);
+
+    DWORD WaitForMultibpleObjectsResult = WaitForMultipleObjects(globalProcessHandlesCount, globalProcessHandles, TRUE, INFINITE);
+    assert(WaitForMultibpleObjectsResult >= WAIT_OBJECT_0 && WaitForMultibpleObjectsResult < globalProcessHandlesCount - 1);
+    for (u64 index = 0; index < globalProcessHandlesCount; index++) {
+        DWORD exitCode = 0;
+        BOOL GetExitCodeProcessResult = GetExitCodeProcess(globalProcessHandles[index], &exitCode);
+        assert(GetExitCodeProcessResult);
+        assert(exitCode == 0);
+    }
 
     writeToStdout(strfmt(arena, "finished in %.1fms\n", getMsFromStart(&timer)));
     return 0;

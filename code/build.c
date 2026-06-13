@@ -1116,8 +1116,8 @@ void build(Arena* arena, DataFiles* dataFiles, PlatformShaders* platformShaders,
     // NOTE: executable and its data file are assumed to have the same name and lie in the same directory
     // so the executable can find its data file by querying its name and changing the extension to .dat
     platform.writeEntireFile(arena, strfmt(arena, "build/%.*s.dat", LIT(exename)), binb.ptr, binb.len);
-    platform.executeCommandLine(strfmt(arena, "clang code/game_windows.c -std=c2x -march=native -Wall -Wextra -g -o build/%.*s.exe", LIT(exename)));
+    platform.executeCommandLine(strfmt(arena, "clang code/game_windows.c -std=c2x -march=native -Wall -Wextra -g -fuse-ld=radlink -o build/%.*s.exe", LIT(exename)));
 
-    platform.executeCommandLine(STR("clang code/test_windows.c -std=c2x -march=native -Wall -Wextra -g -o build/test_windows.exe"));
-    platform.executeCommandLine(STR("clang code/bench_windows.c -std=c2x -march=native -Wall -Wextra -g -o build/bench_windows.exe"));
+    platform.executeCommandLine(STR("clang code/test_windows.c -std=c2x -march=native -Wall -Wextra -g -fuse-ld=radlink -o build/test_windows.exe"));
+    platform.executeCommandLine(STR("clang code/bench_windows.c -std=c2x -march=native -Wall -Wextra -g -fuse-ld=radlink -o build/bench_windows.exe"));
 }

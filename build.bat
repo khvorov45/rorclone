@@ -1,1 +1,1 @@
-clang code/build_windows.c -std=c2x -march=native -Wall -Wextra -g -o build/build_windows.exe && build\build_windows.exe
+clang code/build_windows.c -std=c2x -march=native -Wall -Wextra -g -fuse-ld=radlink -o build/build_windows.exe && build\build_windows.exe
